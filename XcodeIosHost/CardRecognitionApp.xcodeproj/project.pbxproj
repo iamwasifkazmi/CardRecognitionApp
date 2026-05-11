@@ -20,7 +20,9 @@
 		C631610E68D7405BB7E3353B /* IOSCameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACF001F3F27D44FD89B3B637 /* IOSCameraService.swift */; };
 		C8728D24FE894E7C9AB18973 /* CardRecognitionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46037E5851D0434DA529C9EB /* CardRecognitionApp.swift */; };
 		C9763DB6A4A4439693975608 /* CardVisionPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89EF42770F8B4331B99F526B /* CardVisionPipeline.swift */; };
+		F2A03C8D91524B7E8DC11A09 /* SlotRecognitionDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2A03C8D91524B7E8DC11A08 /* SlotRecognitionDiagnostics.swift */; };
 		D90E2CECACF442D787B7B83C /* PerspectiveCorrection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 997B579D47114E238A4068E9 /* PerspectiveCorrection.swift */; };
+		D4E5F60718294A1B9C0D1E2F1 /* PhotoLibraryPHPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F60718294A1B9C0D1E2F0 /* PhotoLibraryPHPicker.swift */; };
 		E8F1A2041B2849C9BD123457 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E8F1A2041B2849C9BD123456 /* Assets.xcassets */; };
 		F1E2D3045060708090A0B00D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = F1E2D3045060708090A0B00C /* LaunchScreen.storyboard */; };
 /* End PBXBuildFile section */
@@ -35,9 +37,11 @@
 		7A7756D002D142B1B71E0161 /* TextRecognition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TextRecognition.swift; path = ../Sources/CardRecognitionApp/TextRecognition.swift; sourceTree = "<group>"; };
 		7AA8E81D8AD74EACA01BA59B /* IOSCameraPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IOSCameraPreview.swift; path = ../Sources/CardRecognitionApp/IOSCameraPreview.swift; sourceTree = "<group>"; };
 		89EF42770F8B4331B99F526B /* CardVisionPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CardVisionPipeline.swift; path = ../Sources/CardRecognitionApp/CardVisionPipeline.swift; sourceTree = "<group>"; };
+		E2A03C8D91524B7E8DC11A08 /* SlotRecognitionDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SlotRecognitionDiagnostics.swift; path = ../Sources/CardRecognitionApp/SlotRecognitionDiagnostics.swift; sourceTree = "<group>"; };
 		8E6F3BC44F6541C9BAE0C221 /* SuitColorHeuristic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SuitColorHeuristic.swift; path = ../Sources/CardRecognitionApp/SuitColorHeuristic.swift; sourceTree = "<group>"; };
 		997B579D47114E238A4068E9 /* PerspectiveCorrection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PerspectiveCorrection.swift; path = ../Sources/CardRecognitionApp/PerspectiveCorrection.swift; sourceTree = "<group>"; };
 		9D2B5836A6134594860CAC9E /* CardTextParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CardTextParser.swift; path = ../Sources/CardRecognitionApp/CardTextParser.swift; sourceTree = "<group>"; };
+		D4E5F60718294A1B9C0D1E2F0 /* PhotoLibraryPHPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhotoLibraryPHPicker.swift; path = ../Sources/CardRecognitionApp/PhotoLibraryPHPicker.swift; sourceTree = "<group>"; };
 		A5B3F142A8584B6E8A54BDDA /* BitmapImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BitmapImport.swift; path = ../Sources/CardRecognitionApp/BitmapImport.swift; sourceTree = "<group>"; };
 		A8BD87EE3C304A978C6A1732 /* InterfaceOrientation+Ios.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "InterfaceOrientation+Ios.swift"; path = "../Sources/CardRecognitionApp/InterfaceOrientation+Ios.swift"; sourceTree = "<group>"; };
 		ACF001F3F27D44FD89B3B637 /* IOSCameraService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IOSCameraService.swift; path = ../Sources/CardRecognitionApp/IOSCameraService.swift; sourceTree = "<group>"; };
@@ -89,10 +93,12 @@
 			children = (
 				46037E5851D0434DA529C9EB /* CardRecognitionApp.swift */,
 				5E50E66A3224473593B0F78E /* ContentView.swift */,
+				D4E5F60718294A1B9C0D1E2F0 /* PhotoLibraryPHPicker.swift */,
 				A5B3F142A8584B6E8A54BDDA /* BitmapImport.swift */,
 				1D2F3AD6E7F44B999A745E50 /* FrameNormalizer.swift */,
 				17C5FC8EC0354AC59E3593C2 /* PlayingCard.swift */,
 				89EF42770F8B4331B99F526B /* CardVisionPipeline.swift */,
+				E2A03C8D91524B7E8DC11A08 /* SlotRecognitionDiagnostics.swift */,
 				7A7756D002D142B1B71E0161 /* TextRecognition.swift */,
 				997B579D47114E238A4068E9 /* PerspectiveCorrection.swift */,
 				7AA8E81D8AD74EACA01BA59B /* IOSCameraPreview.swift */,
@@ -177,10 +183,12 @@
 			files = (
 				C8728D24FE894E7C9AB18973 /* CardRecognitionApp.swift in Sources */,
 				5652A1D0815D4033A0A8A9C0 /* ContentView.swift in Sources */,
+				D4E5F60718294A1B9C0D1E2F1 /* PhotoLibraryPHPicker.swift in Sources */,
 				15A9D7FC0A9D447190171D8E /* BitmapImport.swift in Sources */,
 				0C31BAE62D394960A4293541 /* FrameNormalizer.swift in Sources */,
 				95FF42D754AE4A49B44A1489 /* PlayingCard.swift in Sources */,
 				C9763DB6A4A4439693975608 /* CardVisionPipeline.swift in Sources */,
+				F2A03C8D91524B7E8DC11A09 /* SlotRecognitionDiagnostics.swift in Sources */,
 				98930867252C47D08C902126 /* TextRecognition.swift in Sources */,
 				D90E2CECACF442D787B7B83C /* PerspectiveCorrection.swift in Sources */,
 				7E7C00CFF85E4D0AAA68D0C2 /* IOSCameraPreview.swift in Sources */,

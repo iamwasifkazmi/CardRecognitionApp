@@ -77,4 +77,14 @@ struct RecognizedPlayingCard: Identifiable, Sendable, Equatable {
         let suitText = suit?.symbol ?? "?"
         return "\(rankText)\(suitText)"
     }
+
+    /// Table “Rank” column (unknown → `?`).
+    var rankTableLabel: String {
+        rank?.displayName ?? "?"
+    }
+
+    /// Table “Suit” column (unknown → `?`).
+    var suitTableLabel: String {
+        suit?.symbol ?? "?"
+    }
 }

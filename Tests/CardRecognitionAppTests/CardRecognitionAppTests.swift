@@ -35,6 +35,27 @@ struct CardRecognitionParserTests {
     }
 
     @Test
+    func kingSingleLetter() {
+        #expect(CardTextParser.parseRank(from: "K") == .king)
+        #expect(CardTextParser.parseRank(from: "left K right") == .king)
+    }
+
+    @Test(arguments: ["LO", "L0", "LO of", "LOof fifo", "L0of x", "io", "1O", "IO • x"])
+    func ocrMisreadTen(_ raw: String) {
+        #expect(CardTextParser.parseRank(from: raw) == .ten)
+    }
+
+    @Test
+    func noisyStringStillFindsDigitRank() {
+        #expect(CardTextParser.parseRank(from: "RET F 8 zz") == .eight)
+    }
+
+    @Test(arguments: ["1 0", "0 1", "1\n0"])
+    func visionSplitDigitsTen(_ raw: String) {
+        #expect(CardTextParser.parseRank(from: raw) == .ten)
+    }
+
+    @Test
     func visionPipelineReturnsFiveCards() throws {
         let raster = RasterFixture.makeCheckerboard()
         let snapshot = try CardVisionPipeline.analyze(cgImage: raster)

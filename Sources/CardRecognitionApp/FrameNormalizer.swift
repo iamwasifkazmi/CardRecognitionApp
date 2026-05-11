@@ -13,6 +13,15 @@ enum FrameNormalizer: Sendable {
         guard extent.width > 1, extent.height > 1 else { return nil }
         return context.createCGImage(ci, from: extent)
     }
+
+    /// Bakes EXIF orientation into upright pixels (needed for gallery imports where `CGImage` bytes may not match `.up`).
+    static func uprightCGImage(cgImage: CGImage, exifOrientation: CGImagePropertyOrientation) -> CGImage? {
+        guard exifOrientation != .up else { return cgImage }
+        let ci = CIImage(cgImage: cgImage).oriented(forExifOrientation: Int32(exifOrientation.rawValue))
+        let extent = ci.extent.integral
+        guard extent.width > 1, extent.height > 1 else { return nil }
+        return context.createCGImage(ci, from: extent)
+    }
 }
 
 enum CardScanError: Error {

@@ -4,8 +4,51 @@ import Foundation
 enum CardTextParser: Sendable {
     static func parseRank(from raw: String) -> Rank? {
         let folded = raw.folding(options: .diacriticInsensitive, locale: .current)
-        if let r = rankRegexpMatch(folded) { return r }
-        return heuristicRank(folded.uppercased())
+        let normalized = normalizeOCRDigitArtifacts(folded)
+        if let r = rankRegexpMatch(normalized) { return r }
+        if let r = rankAnywhereMatch(normalized) { return r }
+        if let r = heuristicRank(normalized.uppercased()) { return r }
+        return relaxedDigitRank(normalized)
+    }
+
+    /// Tries each snippet in order (e.g. corner → mirror → full); skips strings that look like OCR garbage.
+    static func firstRank(in sources: [String]) -> Rank? {
+        for raw in sources {
+            for chunk in ocrChunks(from: raw) {
+                guard chunk.isEmpty == false, isPlausibleOCRSnippet(chunk) else { continue }
+                if let r = parseRank(from: chunk) { return r }
+            }
+        }
+        return nil
+    }
+
+    /// Suit symbols and bounded SHDC letters only — never scan every character (avoids `"the"` → hearts via `h`).
+    static func firstSuit(in sources: [String]) -> Suit? {
+        for raw in sources {
+            for chunk in ocrChunks(from: raw) {
+                guard chunk.isEmpty == false, isPlausibleOCRSnippet(chunk) else { continue }
+                if let s = parseSuit(from: chunk) { return s }
+            }
+        }
+        return nil
+    }
+
+    /// True when the string is mostly Latin / digits / card symbols ( Vision sometimes emits Cyrillic noise in pips).
+    static func isPlausibleOCRSnippet(_ raw: String) -> Bool {
+        if raw.count > 120 { return false }
+        let scalars = raw.unicodeScalars
+        var garbage = 0
+        var printable = 0
+        for us in scalars {
+            if us.properties.generalCategory == .control { continue }
+            printable += 1
+            let v = us.value
+            if (0x0400 ... 0x04FF).contains(v) || (0x0500 ... 0x052F).contains(v) {
+                garbage += 1
+            }
+        }
+        guard printable > 0 else { return false }
+        return Float(garbage) / Float(printable) < 0.35
     }
 
     static func parseSuit(from raw: String) -> Suit? {
@@ -24,8 +67,12 @@ enum CardTextParser: Sendable {
 
         for ch in folds {
             if ch.isWhitespace { continue }
-            if let suit = Suit.from(character: ch) {
-                return suit
+            switch ch {
+            case "\u{2660}", "\u{2665}", "\u{2666}", "\u{2663}",
+                 "\u{2664}", "\u{2661}", "\u{2662}", "\u{2667}":
+                return Suit.from(character: ch)
+            default:
+                continue
             }
         }
 
@@ -55,8 +102,93 @@ enum CardTextParser: Sendable {
         options: [.caseInsensitive]
     )
 
+    private static let rankAnywhereRegexp = try? NSRegularExpression(
+        pattern: #"\b(10|[2-9]|A|K|Q|J)\b"#,
+        options: [.caseInsensitive]
+    )
+
+    private static let splitDigitTenRegexp = try? NSRegularExpression(
+        pattern: #"\b(?:1\s+0|0\s+1)\b"#,
+        options: [.caseInsensitive]
+    )
+
+    /// When Vision reads “10” as “LO”, “IO”, “1O”, etc.
+    private static let ocrTenTokenRegexes: [NSRegularExpression] = {
+        /// Glue forms like **LOof** (no `\b` between **O** and **o**) are common mirror-OCR reads of **10**.
+        let patterns = [
+            #"(?i)LOof"#,
+            #"(?i)L0of"#,
+            #"(?i)\bLO\b"#,
+            #"(?i)\bL0\b"#,
+            #"(?i)\bIO\b"#,
+            #"(?i)\blO\b"#,
+            #"(?i)\b1O\b"#,
+            #"(?i)\b1o\b"#,
+            #"(?i)\bI0\b"#,
+            #"(?i)\bl0\b"#,
+            #"(?i)(?:^|[\s\|,])1O(?:$|[\s\|,])"#,
+            #"(?i)(?:^|[\s\|,])IO(?:$|[\s\|,])"#,
+        ]
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: []) }
+    }()
+
+    /// Last resort: a lone digit/rank glyph surrounded by OCR noise (“RET 4 …” keeps “4”).
+    private static let relaxedDigitRankRegexp = try? NSRegularExpression(
+        pattern: #"(?:^|[^0-9A-Za-z])(10|[2-9]|A|K|Q|J)(?:$|[^0-9A-Za-z])"#,
+        options: [.caseInsensitive]
+    )
+
+    private static func normalizeOCRDigitArtifacts(_ s: String) -> String {
+        /// Vision often splits ten into two glyphs (**`1 0`**) or mirrored order (**`0 1`**).
+        var result = s
+        if let re = splitDigitTenRegexp {
+            let r = NSRange(location: 0, length: (result as NSString).length)
+            result = re.stringByReplacingMatches(in: result, options: [], range: r, withTemplate: "10")
+        }
+
+        let len = (result as NSString).length
+        guard len > 0 else { return result }
+        var range = NSRange(location: 0, length: len)
+        for regex in ocrTenTokenRegexes {
+            range = NSRange(location: 0, length: (result as NSString).length)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "10")
+        }
+        return result
+    }
+
+    /// Keeps plausible checks sane for long pooled OCR strings — try head + tail slices.
+    private static func ocrChunks(from raw: String) -> [String] {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return [] }
+        let limit = 120
+        guard trimmed.count > limit else { return [trimmed] }
+        return [String(trimmed.prefix(limit)), String(trimmed.suffix(limit))]
+    }
+
+    private static func relaxedDigitRank(_ s: String) -> Rank? {
+        guard let regex = relaxedDigitRankRegexp else { return nil }
+        let ns = s as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        guard let match = regex.firstMatch(in: s, options: [], range: range), match.numberOfRanges >= 2 else {
+            return nil
+        }
+        let token = ns.substring(with: match.range(at: 1)).uppercased()
+        return rankToken(token)
+    }
+
     private static func rankRegexpMatch(_ folded: String) -> Rank? {
         guard let regex = compactRankRegexp else { return nil }
+        let ns = folded as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        guard let match = regex.firstMatch(in: folded, options: [], range: range), match.numberOfRanges >= 2 else {
+            return nil
+        }
+        let token = ns.substring(with: match.range(at: 1)).uppercased()
+        return rankToken(token)
+    }
+
+    private static func rankAnywhereMatch(_ folded: String) -> Rank? {
+        guard let regex = rankAnywhereRegexp else { return nil }
         let ns = folded as NSString
         let range = NSRange(location: 0, length: ns.length)
         guard let match = regex.firstMatch(in: folded, options: [], range: range), match.numberOfRanges >= 2 else {
@@ -70,6 +202,7 @@ enum CardTextParser: Sendable {
         if upper.contains("10") || upper.contains("TEN") { return .ten }
         if upper.contains("ACE") { return .ace }
         if upper.contains("KING") { return .king }
+        if upper.range(of: #"\bK\b"#, options: .regularExpression) != nil { return .king }
         if upper.contains("QUEEN") || upper.range(of: #"\bQ\b"#, options: .regularExpression) != nil {
             return .queen
         }

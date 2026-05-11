@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Uses the camera to capture five reel cards glowing on monitors for slot-machine analysis.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Loads the photo you chose from your library using full-quality image data for card scanning (fallback when the picker cannot export JPEG on iCloud placeholders).</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -67,9 +67,20 @@ final class ScannerViewModel {
         }
 
         do {
-            let cg = try BitmapImport.cgImage(contentsOf: url)
+            let cg = try BitmapImport.cgImageVisionReady(contentsOf: url)
             await analyzeStandalone(cgImage: cg)
         } catch {
+            statusBanner = error.localizedDescription
+        }
+    }
+
+    /// Image bytes from PhotosPicker / pasteboard pipelines (JPEG, PNG, HEIC, etc.).
+    func analyzeImportedImageData(_ data: Data) async {
+        do {
+            let cg = try BitmapImport.cgImageVisionReady(bytes: data)
+            await analyzeStandalone(cgImage: cg)
+        } catch {
+            latestScan = nil
             statusBanner = error.localizedDescription
         }
     }

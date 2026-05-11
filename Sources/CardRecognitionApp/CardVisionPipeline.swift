@@ -27,23 +27,41 @@ enum CardVisionPipeline: Sendable {
     }
 
     private static func analyzeUpright(cgImage: CGImage) throws -> ScanResult {
+        SlotRecognitionDiagnostics.log("━━━━━━━━ scan start ━━━━━━━━ \(cgImage.width)×\(cgImage.height) px")
         let observations = try detectCardRectangles(cgImage: cgImage)
-        let picks = CardRectangleSelector.select(observations: observations)
+        SlotRecognitionDiagnostics.log("VNDetectRectangles raw count=\(observations.count)")
+        let picks = CardRectangleSelector.select(
+            observations: observations,
+            imageWidth: CGFloat(cgImage.width),
+            imageHeight: CGFloat(cgImage.height)
+        )
+        SlotRecognitionDiagnostics.log("Geometry picks(count=\(picks.count)): left→right slot order")
+
         let ciBase = CIImage(cgImage: cgImage)
 
         var results: [RecognizedPlayingCard] = []
         results.reserveCapacity(5)
 
         for (idx, pick) in picks.enumerated() {
+            SlotRecognitionDiagnostics.log("── slot \(idx + 1) ──")
+
             let warped: CGImage?
             switch pick {
             case .perspective(let obs):
+                SlotRecognitionDiagnostics.log(
+                    "  mode=perspective Vision conf=\(String(format: "%.3f", obs.confidence))"
+                )
+                SlotRecognitionDiagnostics.logRectNorm("  bbox(norm, bottom-left origin)", obs.boundingBox)
                 warped = PerspectiveCorrection.warpedCardCGImage(base: ciBase, observation: obs)
+                    ?? PerspectiveCorrection.croppedCardCGImage(base: ciBase, normalizedRect: obs.boundingBox)
             case .column(let rect):
+                SlotRecognitionDiagnostics.log("  mode=fiveColumnSlice")
+                SlotRecognitionDiagnostics.logRectNorm("  column rect(norm)", rect)
                 warped = PerspectiveCorrection.croppedCardCGImage(base: ciBase, normalizedRect: rect)
             }
 
             guard let cardImage = warped else {
+                SlotRecognitionDiagnostics.log("  ⚠️ warped crop is nil — pipeline cannot OCR this slot")
                 results.append(
                     RecognizedPlayingCard(
                         confidence: 0,
@@ -53,23 +71,56 @@ enum CardVisionPipeline: Sendable {
                 continue
             }
 
-            let ocr = TextRecognition.extract(cardCrop: cardImage)
+            SlotRecognitionDiagnostics.log("  crop pixels: \(cardImage.width)×\(cardImage.height)")
+            let ocr = TextRecognition.extract(cardCrop: cardImage, slotIndex: idx + 1)
             let mlBest = classifyWithCoreMLIfAvailable(cardImage)
 
-            let rank = mlBest.flatMap { CardTextParser.parseRank(from: $0.identifier) }
-                ?? CardTextParser.parseRank(from: ocr.combinedText)
-            var suit = mlBest.flatMap { CardTextParser.parseSuit(from: $0.identifier) }
-                ?? CardTextParser.parseSuit(from: ocr.combinedText)
+            let rankSources = [
+                ocr.topStripText,
+                ocr.suitCornerText,
+                ocr.bottomStripText,
+                ocr.fullCardText,
+                ocr.combinedText,
+            ]
+            let suitSources = [
+                ocr.topStripText,
+                ocr.suitCornerText,
+                ocr.bottomStripText,
+                ocr.fullCardText,
+                ocr.combinedText,
+            ]
 
+            let rank = mlBest.flatMap { CardTextParser.parseRank(from: $0.identifier) }
+                ?? CardTextParser.firstRank(in: rankSources)
+
+            var suit = mlBest.flatMap { CardTextParser.parseSuit(from: $0.identifier) }
+                ?? CardTextParser.firstSuit(in: suitSources)
+
+            var suitFromColor = false
             if suit == nil, rank != nil {
                 suit = SuitColorHeuristic.infer(for: cardImage)
+                suitFromColor = suit != nil
             }
 
-            let confidence = mlBest.map { $0.confidence } ?? ocr.averageConfidence
+            SlotRecognitionDiagnostics.log(
+                "  parse → rank=\(rank.map(\.rawValue) ?? "?") suit=\(suit.map(\.rawValue) ?? "?") ml=\(mlBest?.identifier ?? "–") suitFromColorHint=\(suitFromColor)"
+            )
+
+            let decodedAnything = rank != nil || suit != nil
+            let confidence: Float
+            if let mlBest {
+                confidence = mlBest.confidence
+            } else if decodedAnything {
+                confidence = ocr.averageConfidence
+            } else {
+                confidence = 0
+            }
 
             let diagnosisLines: [String] = [
                 ocr.topStripText.isEmpty ? nil : "OCR corner ▸ \(ocr.topStripText)",
-                ocr.combinedText.isEmpty ? nil : "OCR overall ▸ \(ocr.combinedText)",
+                ocr.suitCornerText.isEmpty ? nil : "OCR suit ▸ \(ocr.suitCornerText)",
+                ocr.bottomStripText.isEmpty ? nil : "OCR mirror ▸ \(ocr.bottomStripText)",
+                ocr.fullCardText.isEmpty ? nil : "OCR full ▸ \(ocr.fullCardText)",
                 mlBest.map { "ML ▸ \($0.identifier) (\(String(format: "%.02f", $0.confidence)))" },
             ].compactMap(\.self)
 
@@ -81,6 +132,11 @@ enum CardVisionPipeline: Sendable {
                     diagnosis: diagnosisLines.joined(separator: "\n")
                 )
             )
+            if decodedAnything == false {
+                SlotRecognitionDiagnostics.log(
+                    "  ⚠️ no rank/suit after OCR — check OCR lines above (empty ROIs vs parser filter vs black suit)."
+                )
+            }
         }
 
         if results.count < 5 {
@@ -94,20 +150,30 @@ enum CardVisionPipeline: Sendable {
             }
         }
 
+        SlotRecognitionDiagnostics.log("━━━━━━━━ scan end ━━━━━━━━")
         return ScanResult(cards: Array(results.prefix(5)))
     }
 
     private static func detectCardRectangles(cgImage: CGImage) throws -> [VNRectangleObservation] {
         let request = VNDetectRectanglesRequest()
         request.maximumObservations = 20
-        request.minimumConfidence = 0.48
+        request.minimumConfidence = 0.42
         request.minimumAspectRatio = 0.42
         request.maximumAspectRatio = 0.95
         request.quadratureTolerance = 40
 
         let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
         try handler.perform([request])
-        return request.results ?? []
+        let raw = request.results ?? []
+        if SlotRecognitionDiagnostics.isLoggingEnabled, raw.count <= 25 {
+            for (i, o) in raw.enumerated() {
+                SlotRecognitionDiagnostics.logRectNorm(
+                    "  cand[\(i)] conf=\(String(format: "%.3f", o.confidence))",
+                    o.boundingBox
+                )
+            }
+        }
+        return raw
     }
 
     private static func classifyWithCoreMLIfAvailable(_ cgImage: CGImage) -> VNClassificationObservation? {
@@ -134,38 +200,67 @@ private enum CardRectangleSelector {
     }
 
     static func select(
-        observations: [VNRectangleObservation]
+        observations: [VNRectangleObservation],
+        imageWidth: CGFloat,
+        imageHeight: CGFloat
     ) -> [Pick] {
-        let minArea = 0.0055 /// ~0.55% of the frame — keeps tiny UI chrome out.
+        let canvasAR = imageWidth / max(imageHeight, 1)
+        /// Ultra-wide thumbnails (five cards in one row ≪ image height) also produce many tiny UI rectangles —
+        /// require a larger **normalized** bbox area only in that regime so chromes/shards drop out before NMS.
+        let minArea: CGFloat = canvasAR >= 2.35 ? 0.036 : 0.0042
+        SlotRecognitionDiagnostics.log(
+            "filter thresholds: canvasAR=\(String(format: "%.2f", Double(canvasAR))) minNormArea=\(String(format: "%.4f", Double(minArea)))"
+        )
+
         let filtered = observations
-            .filter { $0.confidence >= 0.45 }
+            .filter { $0.confidence >= 0.40 }
             .filter { normalizedArea($0.boundingBox) >= minArea }
-            .filter { aspectInCardRange($0.boundingBox) }
+            .filter { aspectInCardRange($0.boundingBox, imageWidth: imageWidth, imageHeight: imageHeight) }
+
+        SlotRecognitionDiagnostics.log(
+            "filter: \(observations.count) raw → \(filtered.count) pass area & pixel-aspect & conf≥0.40 (image \(Int(imageWidth))×\(Int(imageHeight)))"
+        )
 
         let kept = nonMaximumSuppression(observations: filtered, iouThreshold: 0.32)
             .sorted { $0.boundingBox.midX < $1.boundingBox.midX }
 
+        SlotRecognitionDiagnostics.log("NMS+sort: \(kept.count) kept (left→right)")
+
         if kept.count >= 5 {
+            SlotRecognitionDiagnostics.log("strategy=take_first5_perspective_rectangles")
             return Array(kept.prefix(5).map { .perspective($0) })
         }
 
-        if kept.count == 1, kept[0].boundingBox.width > 0.46 {
-            return fiveColumns(in: clip(kept[0].boundingBox))
-        }
-
-        if kept.count > 1, kept.count < 5 {
-            let unionBox = clip(boundingUnion(of: kept))
-            if unionBox.width > 0.52 {
-                return fiveColumns(in: unionBox)
-            }
-            return kept.map { .perspective($0) }
-        }
-
         if kept.isEmpty {
+            SlotRecognitionDiagnostics.log("strategy=SYNTHETIC_fallback_strip (no Vision rectangles passed filters)")
             /// Slot reels are usually centered — this synthetic strip keeps the workflow alive for manual tuning.
             return fiveColumns(in: CGRect(x: 0.03, y: 0.18, width: 0.94, height: 0.64))
         }
 
+        /// Vision often finds only 2–4 rectangles (see partial yellow boxes on some photos). Using those crops alone
+        /// leaves empty slots and shuffles which column maps to which reel. Prefer an even 5-way split of the row hull.
+        if kept.count == 1 {
+            let box = clip(kept[0].boundingBox)
+            if box.width >= 0.36 {
+                SlotRecognitionDiagnostics.log("strategy=SPLIT_one_wide_rectangle_into_5_columns")
+                SlotRecognitionDiagnostics.logRectNorm("strip", box)
+                return fiveColumns(in: box)
+            }
+            SlotRecognitionDiagnostics.log("strategy=single_tight_rectangle_perspective_only (no split)")
+            return [.perspective(kept[0])]
+        }
+
+        let unionBox = clip(boundingUnion(of: kept))
+        /// Panorama hulls like two partial hits can dip just under 0.28 wide (see 0.235 logs).
+        let rowLike = unionBox.width >= 0.195 && unionBox.height >= 0.05
+        if rowLike {
+            SlotRecognitionDiagnostics.log("strategy=SPLIT_union_of_partial_rectangles_into_5_columns")
+            SlotRecognitionDiagnostics.logRectNorm("union", unionBox)
+            return fiveColumns(in: unionBox)
+        }
+
+        SlotRecognitionDiagnostics.log("strategy=FALLBACK_individual_perspective_only count=\(kept.count) (union not row-like)")
+        SlotRecognitionDiagnostics.logRectNorm("union_was", unionBox)
         return kept.map { .perspective($0) }
     }
 
@@ -184,11 +279,13 @@ private enum CardRectangleSelector {
     private static func fiveColumns(in normalized: CGRect) -> [Pick] {
         guard normalized.width > 0.01 else { return [] }
         let step = normalized.width / 5
+        /// Smaller gutters keep slightly more reel art in each column (helps OCR on centered indices).
+        let pad = step * 0.006
         return (0 ..< 5).map { index in
             let column = CGRect(
-                x: normalized.minX + CGFloat(index) * step,
+                x: normalized.minX + CGFloat(index) * step + pad,
                 y: normalized.minY,
-                width: step,
+                width: step - 2 * pad,
                 height: normalized.height
             )
             return Pick.column(clip(column))
@@ -199,10 +296,14 @@ private enum CardRectangleSelector {
         rect.width * rect.height
     }
 
-    private static func aspectInCardRange(_ rect: CGRect) -> Bool {
-        guard rect.height > 0.0001 else { return false }
-        let ar = rect.width / rect.height
-        return ar > 0.45 && ar < 0.97
+    /// Uses **pixel** width/height. Normalized `width/height` is wrong on wide photos (e.g. ~0.29) even for real cards (~0.57).
+    private static func aspectInCardRange(_ rect: CGRect, imageWidth: CGFloat, imageHeight: CGFloat) -> Bool {
+        let pw = rect.width * imageWidth
+        let ph = rect.height * imageHeight
+        guard pw > 2, ph > 2 else { return false }
+        let shortOverLong = min(pw, ph) / max(pw, ph)
+        /// Standard card short/long ≈ 2.5/3.5 ≈ 0.71. Vision boxes can skew almost square (~0.95) on panorama crops.
+        return shortOverLong >= 0.30 && shortOverLong <= 0.993
     }
 
     private static func nonMaximumSuppression(

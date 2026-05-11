@@ -54,8 +54,8 @@ final class IOSCameraService: @unchecked Sendable {
         authorizationDenied = false
 
 #if targetEnvironment(simulator)
-        /// Simulator exposes no AVCapture rear camera — avoid the misleading "rear camera detected" guard.
-        return Self.simulatorUsageNotice
+        /// No AVCapture hardware in Simulator — skip session setup without surfacing Simulator-specific UI copy.
+        return nil
 #else
         let granted = await Self.requestAuthorization()
         guard granted else {
@@ -178,10 +178,6 @@ final class IOSCameraService: @unchecked Sendable {
         return nil
     }
 
-    private static let simulatorUsageNotice = """
-    You’re running in the iOS Simulator, which doesn’t provide a rear camera to apps. Tap the folder button to import a screenshot of the slot reels—or install on an iPhone to use live capture.
-    """
-
     private static func requestAuthorization() async -> Bool {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         switch status {
@@ -206,9 +202,9 @@ enum CameraDiagnosticsError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .cameraWarmingUp:
-            return "Camera frames have not arrived yet. Wait until you see the live preview, check Settings ▸ Privacy ▸ Camera for this app, then try again. Simulator camera is limited—use Import if preview stays black."
+            return "Live preview hasn’t delivered a frame yet. Wait a moment and try again, or open Settings ▸ Privacy ▸ Camera and allow access for this app."
         case .simulatorNoCameraHardware:
-            return "Simulator has no camera feed. Use Import (folder icon), or run on a real iPhone for live scanning."
+            return "Live camera capture isn’t available. Use Photo Library or Browse Files to choose an image."
         }
     }
 }
