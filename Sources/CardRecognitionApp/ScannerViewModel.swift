@@ -1,0 +1,96 @@
+import Observation
+import SwiftUI
+import UniformTypeIdentifiers
+
+#if canImport(UIKit)
+import UIKit
+#endif
+
+#if os(iOS)
+import AVFoundation
+#endif
+
+private struct RasterHandle: @unchecked Sendable {
+    let cgImage: CGImage
+}
+
+@Observable @MainActor
+final class ScannerViewModel {
+    var statusBanner: String?
+    var latestScan: CardVisionPipeline.ScanResult?
+    var isAnalyzing = false
+    var isImporterPresented = false
+
+#if os(iOS)
+    private let iosCamera = IOSCameraService()
+
+    var captureSessionForPreview: AVCaptureSession {
+        iosCamera.captureSession
+    }
+
+    func bootstrapIOSCamera() async {
+        if let failure = await iosCamera.activate() {
+            statusBanner = failure
+        } else {
+            statusBanner = nil
+        }
+    }
+
+    func teardownIOSCamera() {
+        iosCamera.deactivate()
+    }
+
+    func analyzeLiveScene() async {
+        guard isAnalyzing == false else { return }
+        isAnalyzing = true
+        defer { isAnalyzing = false }
+
+        let orientation = OrientationReader.preferredVideoOrientationHint().cgImageOrientationForPortraitCamera
+        let outcome = await iosCamera.performScan(interfaceOrientation: orientation)
+        switch outcome {
+        case .success(let snapshot):
+            latestScan = snapshot
+            statusBanner = "Analyzed five cards in one snapshot."
+        case .failure(let error):
+            latestScan = nil
+            statusBanner = error.localizedDescription
+        }
+    }
+#endif
+
+    func analyzeImportedFile(url: URL) async {
+        let startedAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if startedAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        do {
+            let cg = try BitmapImport.cgImage(contentsOf: url)
+            await analyzeStandalone(cgImage: cg)
+        } catch {
+            statusBanner = error.localizedDescription
+        }
+    }
+
+    func analyzeStandalone(cgImage: CGImage) async {
+        guard isAnalyzing == false else { return }
+        isAnalyzing = true
+        defer { isAnalyzing = false }
+
+        let handle = RasterHandle(cgImage: cgImage)
+
+        do {
+            let snapshot = try await Task.detached(priority: .userInitiated) {
+                try CardVisionPipeline.analyze(cgImage: handle.cgImage)
+            }.value
+
+            latestScan = snapshot
+            statusBanner = "Analyzed five cards from imported image."
+        } catch {
+            latestScan = nil
+            statusBanner = error.localizedDescription
+        }
+    }
+}

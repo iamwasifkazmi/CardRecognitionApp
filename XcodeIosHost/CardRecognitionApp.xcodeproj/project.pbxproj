@@ -1,0 +1,399 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0C31BAE62D394960A4293541 /* FrameNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D2F3AD6E7F44B999A745E50 /* FrameNormalizer.swift */; };
+		15A9D7FC0A9D447190171D8E /* BitmapImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B3F142A8584B6E8A54BDDA /* BitmapImport.swift */; };
+		1EDBCE114DAD436B9C41EBF9 /* ScannerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0964B58B55DD4B01AABE7C74 /* ScannerViewModel.swift */; };
+		5652A1D0815D4033A0A8A9C0 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E50E66A3224473593B0F78E /* ContentView.swift */; };
+		7E7C00CFF85E4D0AAA68D0C2 /* IOSCameraPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AA8E81D8AD74EACA01BA59B /* IOSCameraPreview.swift */; };
+		80D920729B5740CA9F680913 /* InterfaceOrientation+Ios.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8BD87EE3C304A978C6A1732 /* InterfaceOrientation+Ios.swift */; };
+		95FF42D754AE4A49B44A1489 /* PlayingCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17C5FC8EC0354AC59E3593C2 /* PlayingCard.swift */; };
+		98930867252C47D08C902126 /* TextRecognition.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7756D002D142B1B71E0161 /* TextRecognition.swift */; };
+		ACE70253D338419EA5B4781F /* CardTextParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2B5836A6134594860CAC9E /* CardTextParser.swift */; };
+		B98CFE6F157C4FC2BBA970E9 /* SuitColorHeuristic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E6F3BC44F6541C9BAE0C221 /* SuitColorHeuristic.swift */; };
+		C631610E68D7405BB7E3353B /* IOSCameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACF001F3F27D44FD89B3B637 /* IOSCameraService.swift */; };
+		C8728D24FE894E7C9AB18973 /* CardRecognitionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46037E5851D0434DA529C9EB /* CardRecognitionApp.swift */; };
+		C9763DB6A4A4439693975608 /* CardVisionPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89EF42770F8B4331B99F526B /* CardVisionPipeline.swift */; };
+		D90E2CECACF442D787B7B83C /* PerspectiveCorrection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 997B579D47114E238A4068E9 /* PerspectiveCorrection.swift */; };
+		E8F1A2041B2849C9BD123457 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E8F1A2041B2849C9BD123456 /* Assets.xcassets */; };
+		F1E2D3045060708090A0B00D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = F1E2D3045060708090A0B00C /* LaunchScreen.storyboard */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0964B58B55DD4B01AABE7C74 /* ScannerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScannerViewModel.swift; path = ../Sources/CardRecognitionApp/ScannerViewModel.swift; sourceTree = "<group>"; };
+		17C5FC8EC0354AC59E3593C2 /* PlayingCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PlayingCard.swift; path = ../Sources/CardRecognitionApp/PlayingCard.swift; sourceTree = "<group>"; };
+		1D2F3AD6E7F44B999A745E50 /* FrameNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FrameNormalizer.swift; path = ../Sources/CardRecognitionApp/FrameNormalizer.swift; sourceTree = "<group>"; };
+		46037E5851D0434DA529C9EB /* CardRecognitionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CardRecognitionApp.swift; path = ../Sources/CardRecognitionApp/CardRecognitionApp.swift; sourceTree = "<group>"; };
+		5E50E66A3224473593B0F78E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ContentView.swift; path = ../Sources/CardRecognitionApp/ContentView.swift; sourceTree = "<group>"; };
+		75DEE4017C124A2D85651BA7 /* CardRecognitionApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CardRecognitionApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7A7756D002D142B1B71E0161 /* TextRecognition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TextRecognition.swift; path = ../Sources/CardRecognitionApp/TextRecognition.swift; sourceTree = "<group>"; };
+		7AA8E81D8AD74EACA01BA59B /* IOSCameraPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IOSCameraPreview.swift; path = ../Sources/CardRecognitionApp/IOSCameraPreview.swift; sourceTree = "<group>"; };
+		89EF42770F8B4331B99F526B /* CardVisionPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CardVisionPipeline.swift; path = ../Sources/CardRecognitionApp/CardVisionPipeline.swift; sourceTree = "<group>"; };
+		8E6F3BC44F6541C9BAE0C221 /* SuitColorHeuristic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SuitColorHeuristic.swift; path = ../Sources/CardRecognitionApp/SuitColorHeuristic.swift; sourceTree = "<group>"; };
+		997B579D47114E238A4068E9 /* PerspectiveCorrection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PerspectiveCorrection.swift; path = ../Sources/CardRecognitionApp/PerspectiveCorrection.swift; sourceTree = "<group>"; };
+		9D2B5836A6134594860CAC9E /* CardTextParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CardTextParser.swift; path = ../Sources/CardRecognitionApp/CardTextParser.swift; sourceTree = "<group>"; };
+		A5B3F142A8584B6E8A54BDDA /* BitmapImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BitmapImport.swift; path = ../Sources/CardRecognitionApp/BitmapImport.swift; sourceTree = "<group>"; };
+		A8BD87EE3C304A978C6A1732 /* InterfaceOrientation+Ios.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "InterfaceOrientation+Ios.swift"; path = "../Sources/CardRecognitionApp/InterfaceOrientation+Ios.swift"; sourceTree = "<group>"; };
+		ACF001F3F27D44FD89B3B637 /* IOSCameraService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IOSCameraService.swift; path = ../Sources/CardRecognitionApp/IOSCameraService.swift; sourceTree = "<group>"; };
+		AD712C80A5844E16B5F6E0D4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		E8F1A2041B2849C9BD123456 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F1E2D3045060708090A0B00C /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		4970FCB77CB04AC285436D01 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		2665AB063D414903B4161B48 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				E8F1A2041B2849C9BD123456 /* Assets.xcassets */,
+				F1E2D3045060708090A0B00C /* LaunchScreen.storyboard */,
+				AD712C80A5844E16B5F6E0D4 /* Info.plist */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		59C833F26EC44A599FEE0C96 = {
+			isa = PBXGroup;
+			children = (
+				9B7937B4A0A445188300C4A6 /* Sources */,
+				2665AB063D414903B4161B48 /* App */,
+				7508A731D56D45BA86A57821 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7508A731D56D45BA86A57821 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				75DEE4017C124A2D85651BA7 /* CardRecognitionApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		9B7937B4A0A445188300C4A6 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				46037E5851D0434DA529C9EB /* CardRecognitionApp.swift */,
+				5E50E66A3224473593B0F78E /* ContentView.swift */,
+				A5B3F142A8584B6E8A54BDDA /* BitmapImport.swift */,
+				1D2F3AD6E7F44B999A745E50 /* FrameNormalizer.swift */,
+				17C5FC8EC0354AC59E3593C2 /* PlayingCard.swift */,
+				89EF42770F8B4331B99F526B /* CardVisionPipeline.swift */,
+				7A7756D002D142B1B71E0161 /* TextRecognition.swift */,
+				997B579D47114E238A4068E9 /* PerspectiveCorrection.swift */,
+				7AA8E81D8AD74EACA01BA59B /* IOSCameraPreview.swift */,
+				ACF001F3F27D44FD89B3B637 /* IOSCameraService.swift */,
+				A8BD87EE3C304A978C6A1732 /* InterfaceOrientation+Ios.swift */,
+				0964B58B55DD4B01AABE7C74 /* ScannerViewModel.swift */,
+				8E6F3BC44F6541C9BAE0C221 /* SuitColorHeuristic.swift */,
+				9D2B5836A6134594860CAC9E /* CardTextParser.swift */,
+			);
+			name = Sources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		CF418C6805794E09B2E11EE3 /* CardRecognitionApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ED8551CD81FA4A0BA85C6932 /* Build configuration list for PBXNativeTarget "CardRecognitionApp" */;
+			buildPhases = (
+				976D8948CEE844ED84E9D1B8 /* Sources */,
+				4970FCB77CB04AC285436D01 /* Frameworks */,
+				9556DD4640B74FB5AC0101C8 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CardRecognitionApp;
+			productName = CardRecognitionApp;
+			productReference = 75DEE4017C124A2D85651BA7 /* CardRecognitionApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C64999760F9B4A80A78F9D41 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					CF418C6805794E09B2E11EE3 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = 2E4DB235C42C4A1BB059E44D /* Build configuration list for PBXProject "CardRecognitionApp" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 59C833F26EC44A599FEE0C96;
+			productRefGroup = 7508A731D56D45BA86A57821 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CF418C6805794E09B2E11EE3 /* CardRecognitionApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		9556DD4640B74FB5AC0101C8 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E8F1A2041B2849C9BD123457 /* Assets.xcassets in Resources */,
+				F1E2D3045060708090A0B00D /* LaunchScreen.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		976D8948CEE844ED84E9D1B8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C8728D24FE894E7C9AB18973 /* CardRecognitionApp.swift in Sources */,
+				5652A1D0815D4033A0A8A9C0 /* ContentView.swift in Sources */,
+				15A9D7FC0A9D447190171D8E /* BitmapImport.swift in Sources */,
+				0C31BAE62D394960A4293541 /* FrameNormalizer.swift in Sources */,
+				95FF42D754AE4A49B44A1489 /* PlayingCard.swift in Sources */,
+				C9763DB6A4A4439693975608 /* CardVisionPipeline.swift in Sources */,
+				98930867252C47D08C902126 /* TextRecognition.swift in Sources */,
+				D90E2CECACF442D787B7B83C /* PerspectiveCorrection.swift in Sources */,
+				7E7C00CFF85E4D0AAA68D0C2 /* IOSCameraPreview.swift in Sources */,
+				C631610E68D7405BB7E3353B /* IOSCameraService.swift in Sources */,
+				80D920729B5740CA9F680913 /* InterfaceOrientation+Ios.swift in Sources */,
+				1EDBCE114DAD436B9C41EBF9 /* ScannerViewModel.swift in Sources */,
+				B98CFE6F157C4FC2BBA970E9 /* SuitColorHeuristic.swift in Sources */,
+				ACE70253D338419EA5B4781F /* CardTextParser.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0D42EC0CFF1B4E1E90B7ECF5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = L2VLR73628;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Card RecSlot";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cardrecognisation;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		7AE540B8BDF74263902EC996 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = L2VLR73628;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Card RecSlot";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cardrecognisation;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C23505660D4D49D5B2F98A96 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		D2C7207E367C4C17A41AA337 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2E4DB235C42C4A1BB059E44D /* Build configuration list for PBXProject "CardRecognitionApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C23505660D4D49D5B2F98A96 /* Debug */,
+				D2C7207E367C4C17A41AA337 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		ED8551CD81FA4A0BA85C6932 /* Build configuration list for PBXNativeTarget "CardRecognitionApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7AE540B8BDF74263902EC996 /* Debug */,
+				0D42EC0CFF1B4E1E90B7ECF5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = C64999760F9B4A80A78F9D41 /* Project object */;
+}
