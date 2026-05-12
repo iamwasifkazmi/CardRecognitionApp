@@ -193,7 +193,8 @@ If the photo is only in cloud storage or uses an unusual format, save a JPEG or 
 private enum ScanTableColumns {
     static let slot: CGFloat = 34
     static let rank: CGFloat = 52
-    static let suit: CGFloat = 40
+    /// Icon + word (“Diamonds”) needs more space than a single glyph.
+    static let suitMin: CGFloat = 112
     static let confidence: CGFloat = 48
 }
 
@@ -243,7 +244,7 @@ private extension DetectedCardsTable {
             Text("Rank")
                 .frame(width: ScanTableColumns.rank, alignment: .leading)
             Text("Suit")
-                .frame(width: ScanTableColumns.suit, alignment: .center)
+                .frame(minWidth: ScanTableColumns.suitMin, alignment: .leading)
             Spacer(minLength: 0)
             Text("Conf.")
                 .frame(width: ScanTableColumns.confidence, alignment: .trailing)
@@ -251,6 +252,30 @@ private extension DetectedCardsTable {
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
         .minimumScaleFactor(0.85)
+    }
+
+    /// SF Symbol + English name when known (name still readable if the glyph fails to render); “Unknown” otherwise.
+    @ViewBuilder
+    func suitColumnView(_ card: RecognizedPlayingCard) -> some View {
+        if let suit = card.suit {
+            Label {
+                Text(suit.displayTitle)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            } icon: {
+                Image(systemName: suit.sfFilledSymbolName)
+                    .font(.body.weight(.medium))
+                    .symbolRenderingMode(.monochrome)
+            }
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(Color.primary)
+        } else {
+            Text(card.suitColumnTitle)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
     }
 
     func tableBodyRow(slot: Int, card: RecognizedPlayingCard) -> some View {
@@ -266,11 +291,8 @@ private extension DetectedCardsTable {
                 .minimumScaleFactor(0.8)
                 .frame(width: ScanTableColumns.rank, alignment: .leading)
 
-            Text(card.suitTableLabel)
-                .font(.title3)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .frame(width: ScanTableColumns.suit, alignment: .center)
+            suitColumnView(card)
+                .frame(minWidth: ScanTableColumns.suitMin, maxWidth: .infinity, alignment: .leading)
 
             Spacer(minLength: 0)
 

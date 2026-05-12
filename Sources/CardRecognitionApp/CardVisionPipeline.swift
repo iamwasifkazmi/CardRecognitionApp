@@ -97,23 +97,43 @@ enum CardVisionPipeline: Sendable {
                 ?? CardTextParser.firstSuit(in: suitSources)
 
             var suitFromColor = false
-            if suit == nil, rank != nil {
+            var suitFromShape = false
+            let pigment = rank != nil && SuitColorHeuristic.courtShowsRedPipPigment(cardImage)
+            /// Only propose ♥/♦ hue when ROI shows real red pigment; otherwise black ♠ ♣ falsely become ♦ in fill-correlation models.
+            if suit == nil, pigment {
                 suit = SuitColorHeuristic.infer(for: cardImage)
                 suitFromColor = suit != nil
             }
+            if suit == nil, pigment {
+                suit = SuitTemplateShapeMatcher.inferRedSuitsOnly(for: cardImage)
+                suitFromShape = suit != nil
+            }
+            if suit == nil, rank != nil, pigment == false {
+                suit = SuitTemplateShapeMatcher.inferBlackSuitsOnly(for: cardImage)
+                suitFromShape = suit != nil
+            }
 
             SlotRecognitionDiagnostics.log(
-                "  parse → rank=\(rank.map(\.rawValue) ?? "?") suit=\(suit.map(\.rawValue) ?? "?") ml=\(mlBest?.identifier ?? "–") suitFromColorHint=\(suitFromColor)"
+                "  parse → rank=\(rank.map(\.rawValue) ?? "?") suit=\(suit.map(\.rawValue) ?? "?") ml=\(mlBest?.identifier ?? "–") suitFromColorHint=\(suitFromColor) suitFromTemplate=\(suitFromShape)"
             )
 
             let decodedAnything = rank != nil || suit != nil
-            let confidence: Float
+            var confidence: Float
             if let mlBest {
                 confidence = mlBest.confidence
             } else if decodedAnything {
                 confidence = ocr.averageConfidence
             } else {
                 confidence = 0
+            }
+            if suitFromColor, suit != nil {
+                /// OCR was silent on pips; color only separates ♥/♦ — never claim “100%” like text OCR.
+                confidence = min(confidence, 0.62)
+            } else if suitFromShape, suit != nil {
+                confidence = min(confidence, 0.70)
+            } else if rank != nil, suit == nil {
+                /// Rank OCR may stay high while ♠♣ silhouette match failed.
+                confidence = min(confidence, 0.78)
             }
 
             let diagnosisLines: [String] = [
@@ -123,13 +143,22 @@ enum CardVisionPipeline: Sendable {
                 ocr.fullCardText.isEmpty ? nil : "OCR full ▸ \(ocr.fullCardText)",
                 mlBest.map { "ML ▸ \($0.identifier) (\(String(format: "%.02f", $0.confidence)))" },
             ].compactMap(\.self)
+            var diagnosis = diagnosisLines.joined(separator: "\n")
+            if suitFromColor, suit != nil {
+                let note = "Suit ▸ pip color (hue on court ROI)"
+                diagnosis = diagnosis.isEmpty ? note : "\(diagnosis)\n\(note)"
+            }
+            if suitFromShape, suit != nil {
+                let note = "Suit ▸ silhouette vs SF Symbol template"
+                diagnosis = diagnosis.isEmpty ? note : "\(diagnosis)\n\(note)"
+            }
 
             results.append(
                 RecognizedPlayingCard(
                     rank: rank,
                     suit: suit,
                     confidence: confidence,
-                    diagnosis: diagnosisLines.joined(separator: "\n")
+                    diagnosis: diagnosis
                 )
             )
             if decodedAnything == false {

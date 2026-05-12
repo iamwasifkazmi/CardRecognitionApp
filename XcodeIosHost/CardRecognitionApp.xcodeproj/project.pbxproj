@@ -17,6 +17,7 @@
 		98930867252C47D08C902126 /* TextRecognition.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7756D002D142B1B71E0161 /* TextRecognition.swift */; };
 		ACE70253D338419EA5B4781F /* CardTextParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2B5836A6134594860CAC9E /* CardTextParser.swift */; };
 		B98CFE6F157C4FC2BBA970E9 /* SuitColorHeuristic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E6F3BC44F6541C9BAE0C221 /* SuitColorHeuristic.swift */; };
+		E2BBD1EF400478F2CEEDF004 /* SuitTemplateShapeMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2BBD1EF300369E1BDDF003 /* SuitTemplateShapeMatcher.swift */; };
 		C631610E68D7405BB7E3353B /* IOSCameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACF001F3F27D44FD89B3B637 /* IOSCameraService.swift */; };
 		C8728D24FE894E7C9AB18973 /* CardRecognitionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46037E5851D0434DA529C9EB /* CardRecognitionApp.swift */; };
 		C9763DB6A4A4439693975608 /* CardVisionPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89EF42770F8B4331B99F526B /* CardVisionPipeline.swift */; };
@@ -39,6 +40,7 @@
 		89EF42770F8B4331B99F526B /* CardVisionPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CardVisionPipeline.swift; path = ../Sources/CardRecognitionApp/CardVisionPipeline.swift; sourceTree = "<group>"; };
 		E2A03C8D91524B7E8DC11A08 /* SlotRecognitionDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SlotRecognitionDiagnostics.swift; path = ../Sources/CardRecognitionApp/SlotRecognitionDiagnostics.swift; sourceTree = "<group>"; };
 		8E6F3BC44F6541C9BAE0C221 /* SuitColorHeuristic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SuitColorHeuristic.swift; path = ../Sources/CardRecognitionApp/SuitColorHeuristic.swift; sourceTree = "<group>"; };
+		E2BBD1EF300369E1BDDF003 /* SuitTemplateShapeMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SuitTemplateShapeMatcher.swift; path = ../Sources/CardRecognitionApp/SuitTemplateShapeMatcher.swift; sourceTree = "<group>"; };
 		997B579D47114E238A4068E9 /* PerspectiveCorrection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PerspectiveCorrection.swift; path = ../Sources/CardRecognitionApp/PerspectiveCorrection.swift; sourceTree = "<group>"; };
 		9D2B5836A6134594860CAC9E /* CardTextParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CardTextParser.swift; path = ../Sources/CardRecognitionApp/CardTextParser.swift; sourceTree = "<group>"; };
 		D4E5F60718294A1B9C0D1E2F0 /* PhotoLibraryPHPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhotoLibraryPHPicker.swift; path = ../Sources/CardRecognitionApp/PhotoLibraryPHPicker.swift; sourceTree = "<group>"; };
@@ -106,6 +108,7 @@
 				A8BD87EE3C304A978C6A1732 /* InterfaceOrientation+Ios.swift */,
 				0964B58B55DD4B01AABE7C74 /* ScannerViewModel.swift */,
 				8E6F3BC44F6541C9BAE0C221 /* SuitColorHeuristic.swift */,
+				E2BBD1EF300369E1BDDF003 /* SuitTemplateShapeMatcher.swift */,
 				9D2B5836A6134594860CAC9E /* CardTextParser.swift */,
 			);
 			name = Sources;
@@ -196,6 +199,7 @@
 				80D920729B5740CA9F680913 /* InterfaceOrientation+Ios.swift in Sources */,
 				1EDBCE114DAD436B9C41EBF9 /* ScannerViewModel.swift in Sources */,
 				B98CFE6F157C4FC2BBA970E9 /* SuitColorHeuristic.swift in Sources */,
+				E2BBD1EF400478F2CEEDF004 /* SuitTemplateShapeMatcher.swift in Sources */,
 				ACE70253D338419EA5B4781F /* CardTextParser.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

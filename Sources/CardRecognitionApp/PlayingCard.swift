@@ -48,6 +48,26 @@ enum Suit: String, CaseIterable, Sendable, Identifiable {
         default: nil
         }
     }
+
+    /// Filled SF Symbol name — tints reliably in SwiftUI unlike some Unicode pip glyphs alone.
+    var sfFilledSymbolName: String {
+        switch self {
+        case .hearts: "suit.heart.fill"
+        case .diamonds: "suit.diamond.fill"
+        case .spades: "suit.spade.fill"
+        case .clubs: "suit.club.fill"
+        }
+    }
+
+    /// Short English title for tables when symbols are unavailable or as a caption beside the icon.
+    var displayTitle: String {
+        switch self {
+        case .spades: "Spades"
+        case .hearts: "Hearts"
+        case .diamonds: "Diamonds"
+        case .clubs: "Clubs"
+        }
+    }
 }
 
 struct RecognizedPlayingCard: Identifiable, Sendable, Equatable {
@@ -83,8 +103,13 @@ struct RecognizedPlayingCard: Identifiable, Sendable, Equatable {
         rank?.displayName ?? "?"
     }
 
-    /// Table “Suit” column (unknown → `?`).
+    /// Table “Suit” column glyph (unknown → `?`); prefer `suitColumnTitle` for UI strings.
     var suitTableLabel: String {
         suit?.symbol ?? "?"
+    }
+
+    /// Human-readable suit for the table (`Unknown` when not inferred).
+    var suitColumnTitle: String {
+        suit?.displayTitle ?? "Unknown"
     }
 }
