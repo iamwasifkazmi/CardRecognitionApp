@@ -99,16 +99,18 @@ enum CardVisionPipeline: Sendable {
             var suitFromColor = false
             var suitFromShape = false
             let pigment = rank != nil && SuitColorHeuristic.courtShowsRedPipPigment(cardImage)
-            /// Only propose ♥/♦ hue when ROI shows real red pigment; otherwise black ♠ ♣ falsely become ♦ in fill-correlation models.
-            if suit == nil, pigment {
+            let weakRed = rank != nil && SuitColorHeuristic.courtSuggestsRedPipsWeak(cardImage)
+            let redHint = pigment || weakRed
+            /// Strong red: chroma gate. Weak red: still run ♥/♦ templates (standard Bicycle reds often miss strict pigment).
+            if suit == nil, redHint {
                 suit = SuitColorHeuristic.infer(for: cardImage)
                 suitFromColor = suit != nil
             }
-            if suit == nil, pigment {
+            if suit == nil, redHint {
                 suit = SuitTemplateShapeMatcher.inferRedSuitsOnly(for: cardImage)
                 suitFromShape = suit != nil
             }
-            if suit == nil, rank != nil, pigment == false {
+            if suit == nil, rank != nil, redHint == false {
                 suit = SuitTemplateShapeMatcher.inferBlackSuitsOnly(for: cardImage)
                 suitFromShape = suit != nil
             }

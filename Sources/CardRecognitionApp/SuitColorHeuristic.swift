@@ -2,16 +2,38 @@ import CoreGraphics
 
 /// Shared pixel rect for sampling the oversized **court pip** inside a warped card crop (kept in this file so the iOS app target always compiles it alongside `SuitColorHeuristic`).
 enum CardCourtSampling: Sendable {
-    static func centerCourtIntegralRect(imageWidth w: Int, imageHeight h: Int) -> CGRect {
-        let rx = CGFloat(w) * 0.168
-        let ry = CGFloat(h) * 0.092
+    /// Framing variants so template match survives slightly different pip scale / crop.
+    enum CourtFraming: CaseIterable {
+        case standard
+        /// More context (helps busy court cards).
+        case zoomOut
+        /// Tighter on the large pip (helps minimal slot art).
+        case zoomIn
+
+        fileprivate var insetFactors: (CGFloat, CGFloat) {
+            switch self {
+            case .standard: (0.168, 0.092)
+            case .zoomOut: (0.124, 0.068)
+            case .zoomIn: (0.198, 0.108)
+            }
+        }
+    }
+
+    static func centerCourtIntegralRect(
+        imageWidth w: Int,
+        imageHeight h: Int,
+        framing: CourtFraming = .standard
+    ) -> CGRect {
+        let (fx, fy) = framing.insetFactors
+        let rx = CGFloat(w) * fx
+        let ry = CGFloat(h) * fy
         let rw = CGFloat(w) - 2 * rx
         let rh = CGFloat(h) - 2 * ry
         return CGRect(x: rx, y: ry, width: max(16, rw), height: max(16, rh)).integral
     }
 
-    static func centerCourtIntegralRect(for image: CGImage) -> CGRect {
-        centerCourtIntegralRect(imageWidth: image.width, imageHeight: image.height)
+    static func centerCourtIntegralRect(for image: CGImage, framing: CourtFraming = .standard) -> CGRect {
+        centerCourtIntegralRect(imageWidth: image.width, imageHeight: image.height, framing: framing)
     }
 }
 
@@ -118,8 +140,19 @@ enum SuitColorHeuristic: Sendable {
             (redShare >= darkShare * 0.45 || Float(center.brightCardRedInk) >= Float(center.darkNeutralInk) * 0.22)
     }
 
+    /// Softer than `courtShowsRedPipPigment` — enough to run ♥/♦ **templates** on standard Bicycle reds that miss strict chroma gates.
+    static func courtSuggestsRedPipsWeak(_ image: CGImage) -> Bool {
+        guard let center = summarizeCenterCourtInk(image: image) else { return false }
+        let n = Float(max(center.nonWhiteCandidates, 1))
+        let redShare = Float(center.brightCardRedInk) / n
+        let darkShare = Float(center.darkNeutralInk) / n
+        return center.brightCardRedInk >= 22 &&
+            redShare >= 0.009 &&
+            (redShare >= darkShare * 0.28 || Float(center.brightCardRedInk) >= Float(max(center.darkNeutralInk, 1)) * 0.14)
+    }
+
     private static func summarizeCenterCourtInk(image: CGImage) -> CourtInkSummary? {
-        let rect = CardCourtSampling.centerCourtIntegralRect(for: image)
+        let rect = CardCourtSampling.centerCourtIntegralRect(for: image, framing: .standard)
         return rasterizeInkSummary(cropping: image, toPixels: rect)
     }
 

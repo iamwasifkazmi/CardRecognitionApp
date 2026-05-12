@@ -43,7 +43,23 @@ enum SuitTemplateShapeMatcher: Sendable {
     }
 
     static func inferRedSuitsOnly(for image: CGImage) -> Suit? {
-        inferMatching(for: image, allowed: Set([.hearts, .diamonds]), cosineAccept: 0.36, marginMin: 0.052)
+        let tiers: [(Float, Float)] = [
+            (0.36, 0.052),
+            (0.26, 0.030),
+            (0.18, 0.014),
+            (0.12, 0.007),
+        ]
+        for (cos, margin) in tiers {
+            if let s = inferMatching(
+                for: image,
+                allowed: Set([.hearts, .diamonds]),
+                cosineAccept: cos,
+                marginMin: margin
+            ) {
+                return s
+            }
+        }
+        return inferRedRelativePick(for: image)
     }
 
     static func infer(for image: CGImage) -> Suit? {
@@ -58,8 +74,8 @@ enum SuitTemplateShapeMatcher: Sendable {
         let edgeNorm: [Float]
     }
 
-    private static func courtFeatures(for image: CGImage) -> CourtFeatures? {
-        let courtRect = CardCourtSampling.centerCourtIntegralRect(for: image)
+    private static func courtFeatures(for image: CGImage, framing: CardCourtSampling.CourtFraming) -> CourtFeatures? {
+        let courtRect = CardCourtSampling.centerCourtIntegralRect(for: image, framing: framing)
         guard let court = image.cropping(to: courtRect),
               let resized = court.resizedToSquare(side: grid),
               let fillRaw = rasterInkRaw(resized),
@@ -68,37 +84,122 @@ enum SuitTemplateShapeMatcher: Sendable {
         return CourtFeatures(fillRaw: fillRaw, fillNorm: fillNorm, edgeNorm: edgeNorm)
     }
 
+    private static func fillRawStandardCourt(for image: CGImage) -> [Float]? {
+        let rect = CardCourtSampling.centerCourtIntegralRect(for: image, framing: .standard)
+        guard let court = image.cropping(to: rect),
+              let resized = court.resizedToSquare(side: grid),
+              let fillRaw = rasterInkRaw(resized) else { return nil }
+        return fillRaw
+    }
+
+    private static func maxSuitCombo(
+        for image: CGImage,
+        suit: Suit,
+        fillT: [Suit: [Float]],
+        edgeT: [Suit: [Float]]
+    ) -> Float {
+        var best: Float = -1
+        for framing in CardCourtSampling.CourtFraming.allCases {
+            guard let feat = courtFeatures(for: image, framing: framing),
+                  let fT = fillT[suit],
+                  let eT = edgeT[suit],
+                  fT.count == feat.fillNorm.count,
+                  eT.count == feat.edgeNorm.count else { continue }
+            let s = wFill * dot(feat.fillNorm, fT) + wEdge * dot(feat.edgeNorm, eT)
+            best = max(best, s)
+        }
+        return best
+    }
+
     /// When absolute cosine never clears the bar (custom slot art vs Apple glyphs), still choose ♠ vs ♣ from **relative** edge+fill score if the court has ink.
     private static func inferBlackRelativePick(for image: CGImage) -> Suit? {
         guard cachedFill != nil || buildTemplateCaches(),
               let fillT = cachedFill,
               let edgeT = cachedEdge,
-              let feat = courtFeatures(for: image) else { return nil }
+              let fillRawStd = fillRawStandardCourt(for: image) else { return nil }
 
-        let inkMass = feat.fillRaw.reduce(0, +)
+        let inkMass = fillRawStd.reduce(0, +)
         guard inkMass > 3.8 else { return nil }
 
-        func combo(_ suit: Suit) -> Float {
-            guard let fT = fillT[suit], let eT = edgeT[suit] else { return -1 }
-            return wFill * dot(feat.fillNorm, fT) + wEdge * dot(feat.edgeNorm, eT)
-        }
-
-        let sSpade = combo(.spades)
-        let sClub = combo(.clubs)
+        let sSpade = maxSuitCombo(for: image, suit: .spades, fillT: fillT, edgeT: edgeT)
+        let sClub = maxSuitCombo(for: image, suit: .clubs, fillT: fillT, edgeT: edgeT)
         guard sSpade >= 0, sClub >= 0 else { return nil }
 
+        if let refined = refineSpadeVersusClub(
+            sSpade: sSpade,
+            sClub: sClub,
+            fillRaw: fillRawStd,
+            side: grid
+        ) {
+            return refined
+        }
+
         if abs(sSpade - sClub) < 0.018 {
-            let h = inferSpadeVsClubStemHeuristic(fillRaw: feat.fillRaw, side: grid)
+            let h = inferSpadeVsClubStemHeuristic(fillRaw: fillRawStd, side: grid)
             SlotRecognitionDiagnostics.log(
                 "  suit template: relative ♠/♣ (tied scores) → stem heuristic → \(h.map(\.rawValue) ?? "?")"
             )
             return h
         }
-        let pick: Suit = sSpade >= sClub ? .spades : .clubs
+        var pick: Suit = sSpade >= sClub ? .spades : .clubs
+        if pick == .spades, sSpade - sClub < 0.038, upperMassSuggestsClub(fillRawStd, side: grid) {
+            pick = .clubs
+            SlotRecognitionDiagnostics.log("  suit template: ♠ margin narrow + upper trefoil mass → clubs")
+        }
         SlotRecognitionDiagnostics.log(
             "  suit template: relative ♠/♣ pick (scores ♠=\(String(format: "%.3f", sSpade)) ♣=\(String(format: "%.3f", sClub))) → \(pick.rawValue)"
         )
         return pick
+    }
+
+    private static func inferRedRelativePick(for image: CGImage) -> Suit? {
+        guard cachedFill != nil || buildTemplateCaches(),
+              let fillT = cachedFill,
+              let edgeT = cachedEdge,
+              let fillRawStd = fillRawStandardCourt(for: image) else { return nil }
+        guard fillRawStd.reduce(0, +) > 3.2 else { return nil }
+
+        let h = maxSuitCombo(for: image, suit: .hearts, fillT: fillT, edgeT: edgeT)
+        let d = maxSuitCombo(for: image, suit: .diamonds, fillT: fillT, edgeT: edgeT)
+        guard h >= 0, d >= 0 else { return nil }
+        let pick: Suit = h >= d ? .hearts : .diamonds
+        SlotRecognitionDiagnostics.log(
+            "  suit template: relative ♥/♦ pick (scores ♥=\(String(format: "%.3f", h)) ♦=\(String(format: "%.3f", d))) → \(pick.rawValue)"
+        )
+        return pick
+    }
+
+    /// Narrow ♠ wins with trefoil-like upper mass → **♣** (fixes minimal 7♣ slot art misread as ♠).
+    private static func refineSpadeVersusClub(
+        sSpade: Float,
+        sClub: Float,
+        fillRaw: [Float],
+        side: Int
+    ) -> Suit? {
+        guard sSpade > sClub, sSpade - sClub < 0.032 else { return nil }
+        guard upperMassSuggestsClub(fillRaw, side: side) else { return nil }
+        SlotRecognitionDiagnostics.log(
+            "  suit template: refine narrow ♠ lead + upper lobes → clubs (♠=\(String(format: "%.3f", sSpade)) ♣=\(String(format: "%.3f", sClub)))"
+        )
+        return .clubs
+    }
+
+    private static func upperMassSuggestsClub(_ fillRaw: [Float], side: Int) -> Bool {
+        guard fillRaw.count == side * side, side > 20 else { return false }
+        let mid = side * 11 / 20
+        var upper: Float = 0
+        var lower: Float = 0
+        for y in 0 ..< mid {
+            for x in 0 ..< side {
+                upper += fillRaw[y * side + x]
+            }
+        }
+        for y in mid ..< side {
+            for x in 0 ..< side {
+                lower += fillRaw[y * side + x]
+            }
+        }
+        return upper > lower * 1.065
     }
 
     private static func inferMatching(
@@ -110,10 +211,7 @@ enum SuitTemplateShapeMatcher: Sendable {
         guard cachedFill != nil || buildTemplateCaches(),
               let fillT = cachedFill,
               let edgeT = cachedEdge,
-              let feat = courtFeatures(for: image) else { return nil }
-
-        let fillNorm = feat.fillNorm
-        let edgeNorm = feat.edgeNorm
+              let fillRawStd = fillRawStandardCourt(for: image) else { return nil }
 
         let suitsScore: [Suit]
         if let allowed {
@@ -127,18 +225,8 @@ enum SuitTemplateShapeMatcher: Sendable {
         var bestScore = Float(-999)
         var second = Float(-999)
 
-        func scorePair(for suit: Suit) -> Float? {
-            guard let fT = fillT[suit],
-                  let eT = edgeT[suit],
-                  fT.count == fillNorm.count,
-                  eT.count == edgeNorm.count else { return nil }
-            let cF = dot(fillNorm, fT)
-            let cE = dot(edgeNorm, eT)
-            return wFill * cF + wEdge * cE
-        }
-
         for suit in suitsScore {
-            guard let score = scorePair(for: suit) else { continue }
+            let score = maxSuitCombo(for: image, suit: suit, fillT: fillT, edgeT: edgeT)
             if score > bestScore {
                 second = bestScore
                 bestScore = score
@@ -152,9 +240,29 @@ enum SuitTemplateShapeMatcher: Sendable {
         guard bestScore >= cosineAccept else { return nil }
         if second >= 0, bestScore - second < marginMin {
             if allowed == Set([.spades, .clubs]) {
-                return inferSpadeVsClubStemHeuristic(fillRaw: feat.fillRaw, side: grid)
+                if let refined = refineSpadeVersusClub(
+                    sSpade: maxSuitCombo(for: image, suit: .spades, fillT: fillT, edgeT: edgeT),
+                    sClub: maxSuitCombo(for: image, suit: .clubs, fillT: fillT, edgeT: edgeT),
+                    fillRaw: fillRawStd,
+                    side: grid
+                ) {
+                    return refined
+                }
+                return inferSpadeVsClubStemHeuristic(fillRaw: fillRawStd, side: grid)
             }
             return nil
+        }
+
+        /// Only second-guess a ♠ win when the **runner-up** was also close (avoid flipping a decisive ♠).
+        if allowed == Set([.spades, .clubs]), pick == .spades,
+           second >= 0, bestScore - second < 0.042,
+           let refined = refineSpadeVersusClub(
+               sSpade: maxSuitCombo(for: image, suit: .spades, fillT: fillT, edgeT: edgeT),
+               sClub: maxSuitCombo(for: image, suit: .clubs, fillT: fillT, edgeT: edgeT),
+               fillRaw: fillRawStd,
+               side: grid
+           ) {
+            return refined
         }
 
         return pick
@@ -162,6 +270,26 @@ enum SuitTemplateShapeMatcher: Sendable {
 
     private static func inferSpadeVsClubStemHeuristic(fillRaw: [Float], side: Int) -> Suit? {
         guard side > 17, fillRaw.count == side * side else { return nil }
+        let mid = side * 11 / 20
+        var upper: Float = 0
+        var lower: Float = 0
+        for y in 0 ..< mid {
+            for x in 0 ..< side {
+                upper += fillRaw[y * side + x]
+            }
+        }
+        for y in mid ..< side {
+            for x in 0 ..< side {
+                lower += fillRaw[y * side + x]
+            }
+        }
+        if upper > lower * 1.08 {
+            return .clubs
+        }
+        if lower > upper * 1.12 {
+            return .spades
+        }
+
         let cx = Float(side / 2)
         var bottomCone: Float = 0
         var bottomWings: Float = 0
@@ -177,7 +305,7 @@ enum SuitTemplateShapeMatcher: Sendable {
             }
         }
         let ratio = bottomCone / max(bottomCone + bottomWings, 1e-6)
-        return ratio >= 0.42 ? .spades : .clubs
+        return ratio >= 0.46 ? .spades : .clubs
     }
 
     private static func buildTemplateCaches() -> Bool {

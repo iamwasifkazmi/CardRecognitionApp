@@ -106,6 +106,17 @@ enum TextRecognition: Sendable {
             }
         }
 
+        /// iCloud / timing glitches sometimes leave every regional pass empty; a second `.fast` sweep can still recover glyphs.
+        if combined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let rescue = fallbackFullCardPass(cgImage: cardCrop)
+            if rescue.text.isEmpty == false {
+                combined = rescue.text
+                whole = rescue
+                confs = [rescue.avg]
+                averageConfidence = rescue.avg
+            }
+        }
+
         if SlotRecognitionDiagnostics.isLoggingEnabled, let tag = slotIndex {
             SlotRecognitionDiagnostics.log(
                 """
