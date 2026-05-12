@@ -5,16 +5,11 @@ import UIKit
 import AppKit
 #endif
 
-/// Correlates the warped **court** ROI with SF Symbol suits using **edge + fill** (fill alone biased toward ♦).
-/// When `SuitColorHeuristic.courtShowsRedPipPigment` is false, callers should use **only ♠ ♣** so black art is not mislabeled ♦.
+/// Correlates the warped **court** ROI with SF Symbol suits using **edge + fill**.
 enum SuitTemplateShapeMatcher: Sendable {
     private static let grid = 72
     private static let wEdge: Float = 0.58
     private static let wFill: Float = 0.42
-
-    /// Monochrome/black cards: ♠ ♣ only.
-    private static let cosineAcceptBW: Float = 0.38
-    private static let marginMinBW: Float = 0.045
 
     private static let suitSymbolNames: [Suit: String] = [
         .spades: "suit.spade.fill",
@@ -26,18 +21,84 @@ enum SuitTemplateShapeMatcher: Sendable {
     nonisolated(unsafe) private static var cachedFill: [Suit: [Float]]?
     nonisolated(unsafe) private static var cachedEdge: [Suit: [Float]]?
 
+    /// Monochrome cards: ♠ ♣ with strict → relaxed thresholds, then **relative** pick (avoids perpetual `Unknown` when art ≠ SF Symbol geometry).
     static func inferBlackSuitsOnly(for image: CGImage) -> Suit? {
-        inferMatching(for: image, allowed: Set([.spades, .clubs]), cosineAccept: cosineAcceptBW, marginMin: marginMinBW)
+        let tiers: [(Float, Float)] = [
+            (0.38, 0.045),
+            (0.28, 0.025),
+            (0.20, 0.012),
+            (0.14, 0.006),
+        ]
+        for (cos, margin) in tiers {
+            if let s = inferMatching(
+                for: image,
+                allowed: Set([.spades, .clubs]),
+                cosineAccept: cos,
+                marginMin: margin
+            ) {
+                return s
+            }
+        }
+        return inferBlackRelativePick(for: image)
     }
 
-    /// When the ROI is dominated by ♥♦ pigments but OCR lost the glyphs.
     static func inferRedSuitsOnly(for image: CGImage) -> Suit? {
         inferMatching(for: image, allowed: Set([.hearts, .diamonds]), cosineAccept: 0.36, marginMin: 0.052)
     }
 
-    /// Diagnostic / uncommon layouts only.
     static func infer(for image: CGImage) -> Suit? {
         inferMatching(for: image, allowed: nil, cosineAccept: 0.32, marginMin: 0.04)
+    }
+
+    // MARK: - Core matching
+
+    private struct CourtFeatures {
+        let fillRaw: [Float]
+        let fillNorm: [Float]
+        let edgeNorm: [Float]
+    }
+
+    private static func courtFeatures(for image: CGImage) -> CourtFeatures? {
+        let courtRect = CardCourtSampling.centerCourtIntegralRect(for: image)
+        guard let court = image.cropping(to: courtRect),
+              let resized = court.resizedToSquare(side: grid),
+              let fillRaw = rasterInkRaw(resized),
+              let fillNorm = l2Normalize(fillRaw),
+              let edgeNorm = normalizedSobelMagnitude(fillRaw, side: grid) else { return nil }
+        return CourtFeatures(fillRaw: fillRaw, fillNorm: fillNorm, edgeNorm: edgeNorm)
+    }
+
+    /// When absolute cosine never clears the bar (custom slot art vs Apple glyphs), still choose ♠ vs ♣ from **relative** edge+fill score if the court has ink.
+    private static func inferBlackRelativePick(for image: CGImage) -> Suit? {
+        guard cachedFill != nil || buildTemplateCaches(),
+              let fillT = cachedFill,
+              let edgeT = cachedEdge,
+              let feat = courtFeatures(for: image) else { return nil }
+
+        let inkMass = feat.fillRaw.reduce(0, +)
+        guard inkMass > 3.8 else { return nil }
+
+        func combo(_ suit: Suit) -> Float {
+            guard let fT = fillT[suit], let eT = edgeT[suit] else { return -1 }
+            return wFill * dot(feat.fillNorm, fT) + wEdge * dot(feat.edgeNorm, eT)
+        }
+
+        let sSpade = combo(.spades)
+        let sClub = combo(.clubs)
+        guard sSpade >= 0, sClub >= 0 else { return nil }
+
+        if abs(sSpade - sClub) < 0.018 {
+            let h = inferSpadeVsClubStemHeuristic(fillRaw: feat.fillRaw, side: grid)
+            SlotRecognitionDiagnostics.log(
+                "  suit template: relative ♠/♣ (tied scores) → stem heuristic → \(h.map(\.rawValue) ?? "?")"
+            )
+            return h
+        }
+        let pick: Suit = sSpade >= sClub ? .spades : .clubs
+        SlotRecognitionDiagnostics.log(
+            "  suit template: relative ♠/♣ pick (scores ♠=\(String(format: "%.3f", sSpade)) ♣=\(String(format: "%.3f", sClub))) → \(pick.rawValue)"
+        )
+        return pick
     }
 
     private static func inferMatching(
@@ -48,14 +109,11 @@ enum SuitTemplateShapeMatcher: Sendable {
     ) -> Suit? {
         guard cachedFill != nil || buildTemplateCaches(),
               let fillT = cachedFill,
-              let edgeT = cachedEdge else { return nil }
+              let edgeT = cachedEdge,
+              let feat = courtFeatures(for: image) else { return nil }
 
-        let courtRect = CardCourtSampling.centerCourtIntegralRect(for: image)
-        guard let court = image.cropping(to: courtRect),
-              let resized = court.resizedToSquare(side: grid),
-              let fillRaw = rasterInkRaw(resized),
-              let fillNorm = l2Normalize(fillRaw),
-              let edgeNorm = normalizedSobelMagnitude(fillRaw, side: grid) else { return nil }
+        let fillNorm = feat.fillNorm
+        let edgeNorm = feat.edgeNorm
 
         let suitsScore: [Suit]
         if let allowed {
@@ -93,9 +151,8 @@ enum SuitTemplateShapeMatcher: Sendable {
         guard let pick = bestSuit else { return nil }
         guard bestScore >= cosineAccept else { return nil }
         if second >= 0, bestScore - second < marginMin {
-            /// Spade ♠ vs ♣ stalk / trefoil are often nearly tied — use bottom-center ink distribution.
             if allowed == Set([.spades, .clubs]) {
-                return inferSpadeVsClubStemHeuristic(fillRaw: fillRaw, side: grid)
+                return inferSpadeVsClubStemHeuristic(fillRaw: feat.fillRaw, side: grid)
             }
             return nil
         }
@@ -103,7 +160,6 @@ enum SuitTemplateShapeMatcher: Sendable {
         return pick
     }
 
-    /// When scores tie, ♠ concentrates more ink directly under the centroid in the bottom wedge.
     private static func inferSpadeVsClubStemHeuristic(fillRaw: [Float], side: Int) -> Suit? {
         guard side > 17, fillRaw.count == side * side else { return nil }
         let cx = Float(side / 2)
@@ -208,7 +264,6 @@ enum SuitTemplateShapeMatcher: Sendable {
     }
 #endif
 
-    /// Raw ink prominence 0…1 (not L2-normalized).
     private static func rasterInkRaw(_ image: CGImage) -> [Float]? {
         let w = image.width
         let h = image.height
