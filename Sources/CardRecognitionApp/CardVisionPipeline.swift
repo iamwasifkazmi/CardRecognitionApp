@@ -37,6 +37,10 @@ enum CardVisionPipeline: Sendable {
         )
         SlotRecognitionDiagnostics.log("Geometry picks(count=\(picks.count)): left→right slot order")
 
+        /// Minimal slot strips (e.g. 1222×314) are very wide; ♠/♣ templates on **Queen** are more reliable than on standard 2∶1 photos where court art dominates.
+        let canvasAspect = CGFloat(cgImage.width) / CGFloat(max(cgImage.height, 1))
+        let wideHorizontalStripLayout = canvasAspect >= 3.05
+
         let ciBase = CIImage(cgImage: cgImage)
 
         var results: [RecognizedPlayingCard] = []
@@ -82,16 +86,35 @@ enum CardVisionPipeline: Sendable {
                 ocr.fullCardText,
                 ocr.combinedText,
             ]
+
+            let rank = mlBest.flatMap { CardTextParser.parseRank(from: $0.identifier) }
+                ?? CardTextParser.firstRank(in: rankSources)
+
+            let narrowCrop = CGFloat(cardImage.width) / CGFloat(cardImage.height) < 0.52
+            let rankSevenCornerSuit = rank == .seven
+                ? TextRecognition.cornerIndexSuitForRankSeven(
+                    cardCrop: cardImage,
+                    narrowColumn: narrowCrop,
+                    slotIndex: idx + 1
+                )
+                : ""
+            let faceCornerSuit = rank?.isCourtRank == true
+                ? TextRecognition.cornerIndexSuitForFaceRank(
+                    cardCrop: cardImage,
+                    narrowColumn: narrowCrop,
+                    slotIndex: idx + 1
+                )
+                : ""
+
             let suitSources = [
+                rankSevenCornerSuit,
+                faceCornerSuit,
                 ocr.topStripText,
                 ocr.suitCornerText,
                 ocr.bottomStripText,
                 ocr.fullCardText,
                 ocr.combinedText,
             ]
-
-            let rank = mlBest.flatMap { CardTextParser.parseRank(from: $0.identifier) }
-                ?? CardTextParser.firstRank(in: rankSources)
 
             var suit = mlBest.flatMap { CardTextParser.parseSuit(from: $0.identifier) }
                 ?? CardTextParser.firstSuit(in: suitSources)
@@ -101,18 +124,37 @@ enum CardVisionPipeline: Sendable {
             let pigment = rank != nil && SuitColorHeuristic.courtShowsRedPipPigment(cardImage)
             let weakRed = rank != nil && SuitColorHeuristic.courtSuggestsRedPipsWeak(cardImage)
             let redHint = pigment || weakRed
-            /// Strong red: chroma gate. Weak red: still run ♥/♦ templates (standard Bicycle reds often miss strict pigment).
-            if suit == nil, redHint {
-                suit = SuitColorHeuristic.infer(for: cardImage)
-                suitFromColor = suit != nil
-            }
-            if suit == nil, redHint {
-                suit = SuitTemplateShapeMatcher.inferRedSuitsOnly(for: cardImage)
-                suitFromShape = suit != nil
-            }
-            if suit == nil, rank != nil, redHint == false {
-                suit = SuitTemplateShapeMatcher.inferBlackSuitsOnly(for: cardImage)
-                suitFromShape = suit != nil
+
+            /// **Rank 7**: only ML or explicit text (incl. `rank7_index_suit`). No silhouette guess if the glyph isn’t read.
+            let allowSilhouetteAndColorFallback = rank != .seven
+            /// **Black Queen** on portrait photo rows: court illustration often makes ♣ “win” over ♠; skip ♠/♣ template unless the image looks like a wide minimal strip (where OCR + templates still work for slot Q).
+            let allowBlackSilhouetteFallback: Bool = {
+                guard rank != .seven else { return false }
+                if rank == .queen, redHint == false, wideHorizontalStripLayout == false { return false }
+                return true
+            }()
+
+            if allowSilhouetteAndColorFallback {
+                if suit == nil, redHint {
+                    suit = SuitColorHeuristic.infer(for: cardImage)
+                    suitFromColor = suit != nil
+                }
+                if suit == nil, redHint {
+                    suit = SuitTemplateShapeMatcher.inferRedSuitsOnly(for: cardImage)
+                    suitFromShape = suit != nil
+                }
+                if suit == nil, rank != nil, redHint == false, allowBlackSilhouetteFallback {
+                    suit = SuitTemplateShapeMatcher.inferBlackSuitsOnly(for: cardImage)
+                    suitFromShape = suit != nil
+                }
+            } else if rank == .seven, suit == nil {
+                SlotRecognitionDiagnostics.log(
+                    "  suit: rank 7 — no suit in OCR/ML (see rank7_index_suit); leaving unknown (no template/color fallback)"
+                )
+            } else if rank == .queen, redHint == false, suit == nil, wideHorizontalStripLayout == false {
+                SlotRecognitionDiagnostics.log(
+                    "  suit: Queen — no black suit in OCR/ML (see face_index_suit); unknown on portrait layout (♠/♣ template skipped)"
+                )
             }
 
             SlotRecognitionDiagnostics.log(
@@ -152,6 +194,14 @@ enum CardVisionPipeline: Sendable {
             }
             if suitFromShape, suit != nil {
                 let note = "Suit ▸ silhouette vs SF Symbol template"
+                diagnosis = diagnosis.isEmpty ? note : "\(diagnosis)\n\(note)"
+            }
+            if rank == .seven, suit == nil {
+                let note = "Suit ▸ unknown — rank 7 index glyph not read (guessing disabled)"
+                diagnosis = diagnosis.isEmpty ? note : "\(diagnosis)\n\(note)"
+            }
+            if rank == .queen, suit == nil, redHint == false, wideHorizontalStripLayout == false {
+                let note = "Suit ▸ unknown — Queen index suit not read (♠/♣ guess off on this layout)"
                 diagnosis = diagnosis.isEmpty ? note : "\(diagnosis)\n\(note)"
             }
 

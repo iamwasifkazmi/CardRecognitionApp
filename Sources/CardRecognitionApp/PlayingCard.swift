@@ -20,6 +20,14 @@ enum Rank: String, CaseIterable, Sendable, Identifiable {
     var displayName: String {
         rawValue
     }
+
+    /// J, Q, K — small index suit is often missing from broad OCR; court art dominates ♠/♣ templates.
+    var isCourtRank: Bool {
+        switch self {
+        case .jack, .queen, .king: true
+        default: false
+        }
+    }
 }
 
 enum Suit: String, CaseIterable, Sendable, Identifiable {
@@ -67,6 +75,11 @@ enum Suit: String, CaseIterable, Sendable, Identifiable {
         case .diamonds: "Diamonds"
         case .clubs: "Clubs"
         }
+    }
+
+    /// Standard deck: ♥ ♦ print in red; ♠ ♣ in black.
+    var isRedSuit: Bool {
+        self == .hearts || self == .diamonds
     }
 }
 

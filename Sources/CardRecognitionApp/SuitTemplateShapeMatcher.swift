@@ -111,6 +111,57 @@ enum SuitTemplateShapeMatcher: Sendable {
         return best
     }
 
+    /// Bottom-center “stem + point” mass vs side lobes — high values match ♠ more than trefoil ♣.
+    private static func spadeStemConeRatio(fillRaw: [Float], side: Int) -> Float? {
+        guard side > 17, fillRaw.count == side * side else { return nil }
+        let cx = Float(side / 2)
+        var bottomCone: Float = 0
+        var bottomWings: Float = 0
+        let ySplit = Int(Float(side) * 0.62)
+        for y in ySplit ..< side {
+            for x in 0 ..< side {
+                let v = fillRaw[y * side + x]
+                let fx = Float(x)
+                let dist = abs(fx - cx)
+                let narrow = Float(side) * 0.20
+                if dist < narrow { bottomCone += v }
+                else { bottomWings += v }
+            }
+        }
+        let t = bottomCone + bottomWings
+        guard t > 1e-4 else { return nil }
+        return bottomCone / t
+    }
+
+    /// Share of ink in the **center third** of the **top ~48%** of the court — high for a single ♠ bulb, lower for ♣ trefoil / multi-pip art.
+    private static func upperCenterMassShareTopHalf(_ fillRaw: [Float], side: Int) -> Float {
+        guard fillRaw.count == side * side, side > 12 else { return 0 }
+        let yTop = Int(Float(side) * 0.48)
+        let xC1 = side / 3
+        let xC2 = side * 2 / 3
+        var center: Float = 0
+        var total: Float = 0
+        for y in 0 ..< yTop {
+            for x in 0 ..< side {
+                let v = fillRaw[y * side + x]
+                total += v
+                if x >= xC1 && x < xC2 { center += v }
+            }
+        }
+        return center / max(total, 1e-6)
+    }
+
+    private static func maxEdgeSuitDot(for image: CGImage, suit: Suit, edgeT: [Suit: [Float]]) -> Float {
+        var best: Float = -1
+        for framing in CardCourtSampling.CourtFraming.allCases {
+            guard let feat = courtFeatures(for: image, framing: framing),
+                  let eT = edgeT[suit],
+                  eT.count == feat.edgeNorm.count else { continue }
+            best = max(best, dot(feat.edgeNorm, eT))
+        }
+        return best
+    }
+
     /// When absolute cosine never clears the bar (custom slot art vs Apple glyphs), still choose ♠ vs ♣ from **relative** edge+fill score if the court has ink.
     private static func inferBlackRelativePick(for image: CGImage) -> Suit? {
         guard cachedFill != nil || buildTemplateCaches(),
@@ -142,9 +193,21 @@ enum SuitTemplateShapeMatcher: Sendable {
             return h
         }
         var pick: Suit = sSpade >= sClub ? .spades : .clubs
-        if pick == .spades, sSpade - sClub < 0.038, upperMassSuggestsClub(fillRawStd, side: grid) {
+        if pick == .spades, sSpade - sClub < 0.038,
+           upperMassSuggestsClub(fillRawStd, side: grid),
+           (spadeStemConeRatio(fillRaw: fillRawStd, side: grid) ?? 0) < 0.43 {
             pick = .clubs
             SlotRecognitionDiagnostics.log("  suit template: ♠ margin narrow + upper trefoil mass → clubs")
+        }
+        if pick == .clubs, sClub - sSpade < 0.056,
+           let stemR = spadeStemConeRatio(fillRaw: fillRawStd, side: grid) {
+            let weakT = max(sSpade, sClub) < 0.22
+            let centerShare = upperCenterMassShareTopHalf(fillRawStd, side: grid)
+            let stemCut: Float = weakT ? 0.402 : 0.454
+            if stemR >= stemCut, (weakT == false || centerShare >= 0.375) {
+                pick = .spades
+                SlotRecognitionDiagnostics.log("  suit template: ♣ lead narrow + bottom stem → spades")
+            }
         }
         SlotRecognitionDiagnostics.log(
             "  suit template: relative ♠/♣ pick (scores ♠=\(String(format: "%.3f", sSpade)) ♣=\(String(format: "%.3f", sClub))) → \(pick.rawValue)"
@@ -162,10 +225,28 @@ enum SuitTemplateShapeMatcher: Sendable {
         let h = maxSuitCombo(for: image, suit: .hearts, fillT: fillT, edgeT: edgeT)
         let d = maxSuitCombo(for: image, suit: .diamonds, fillT: fillT, edgeT: edgeT)
         guard h >= 0, d >= 0 else { return nil }
-        let pick: Suit = h >= d ? .hearts : .diamonds
-        SlotRecognitionDiagnostics.log(
-            "  suit template: relative ♥/♦ pick (scores ♥=\(String(format: "%.3f", h)) ♦=\(String(format: "%.3f", d))) → \(pick.rawValue)"
-        )
+        var pick: Suit = h >= d ? .hearts : .diamonds
+        if abs(h - d) < 0.017 {
+            let he = maxEdgeSuitDot(for: image, suit: .hearts, edgeT: edgeT)
+            let de = maxEdgeSuitDot(for: image, suit: .diamonds, edgeT: edgeT)
+            if abs(he - de) >= 0.006 {
+                pick = he >= de ? .hearts : .diamonds
+                SlotRecognitionDiagnostics.log(
+                    "  suit template: ♥/♦ edge tie-break (♥e=\(String(format: "%.3f", he)) ♦e=\(String(format: "%.3f", de))) → \(pick.rawValue)"
+                )
+            } else if let spread = inferHeartVsDiamondByPipSpread(fillRawStd, side: grid) {
+                pick = spread
+                SlotRecognitionDiagnostics.log("  suit template: ♥/♦ pip-layout tie-break → \(pick.rawValue)")
+            } else {
+                SlotRecognitionDiagnostics.log(
+                    "  suit template: relative ♥/♦ pick (scores ♥=\(String(format: "%.3f", h)) ♦=\(String(format: "%.3f", d))) → \(pick.rawValue)"
+                )
+            }
+        } else {
+            SlotRecognitionDiagnostics.log(
+                "  suit template: relative ♥/♦ pick (scores ♥=\(String(format: "%.3f", h)) ♦=\(String(format: "%.3f", d))) → \(pick.rawValue)"
+            )
+        }
         return pick
     }
 
@@ -177,6 +258,7 @@ enum SuitTemplateShapeMatcher: Sendable {
         side: Int
     ) -> Suit? {
         guard sSpade > sClub, sSpade - sClub < 0.032 else { return nil }
+        if let stem = spadeStemConeRatio(fillRaw: fillRaw, side: side), stem >= 0.435 { return nil }
         guard upperMassSuggestsClub(fillRaw, side: side) else { return nil }
         SlotRecognitionDiagnostics.log(
             "  suit template: refine narrow ♠ lead + upper lobes → clubs (♠=\(String(format: "%.3f", sSpade)) ♣=\(String(format: "%.3f", sClub)))"
@@ -186,6 +268,7 @@ enum SuitTemplateShapeMatcher: Sendable {
 
     private static func upperMassSuggestsClub(_ fillRaw: [Float], side: Int) -> Bool {
         guard fillRaw.count == side * side, side > 20 else { return false }
+        if let stem = spadeStemConeRatio(fillRaw: fillRaw, side: side), stem >= 0.418 { return false }
         let mid = side * 11 / 20
         var upper: Float = 0
         var lower: Float = 0
@@ -200,6 +283,31 @@ enum SuitTemplateShapeMatcher: Sendable {
             }
         }
         return upper > lower * 1.065
+    }
+
+    /// When ♥/♦ combined scores tie, pip fields differ: ♦ layouts are often taller, ♥ slightly wider at 7-count.
+    private static func inferHeartVsDiamondByPipSpread(_ fillRaw: [Float], side: Int, axisRatio: Float = 1.085) -> Suit? {
+        guard fillRaw.count == side * side, side > 12 else { return nil }
+        let threshold: Float = 0.055
+        var minX = side, maxX = 0, minY = side, maxY = 0
+        var any = false
+        for y in 0 ..< side {
+            for x in 0 ..< side {
+                if fillRaw[y * side + x] < threshold { continue }
+                any = true
+                minX = min(minX, x)
+                maxX = max(maxX, x)
+                minY = min(minY, y)
+                maxY = max(maxY, y)
+            }
+        }
+        guard any else { return nil }
+        let w = Float(maxX - minX + 1)
+        let h = Float(maxY - minY + 1)
+        guard w > 2, h > 2 else { return nil }
+        if h > w * axisRatio { return .diamonds }
+        if w > h * axisRatio { return .hearts }
+        return nil
     }
 
     private static func inferMatching(
@@ -265,6 +373,22 @@ enum SuitTemplateShapeMatcher: Sendable {
             return refined
         }
 
+        if allowed == Set([.spades, .clubs]), pick == .clubs,
+           let stemR = spadeStemConeRatio(fillRaw: fillRawStd, side: grid) {
+            let sSpade = maxSuitCombo(for: image, suit: .spades, fillT: fillT, edgeT: edgeT)
+            let sClub = maxSuitCombo(for: image, suit: .clubs, fillT: fillT, edgeT: edgeT)
+            guard sClub >= sSpade, sClub - sSpade < 0.058 else { return pick }
+            let weakT = max(sSpade, sClub) < 0.22
+            let centerShare = upperCenterMassShareTopHalf(fillRawStd, side: grid)
+            let stemCut: Float = weakT ? 0.402 : 0.454
+            guard stemR >= stemCut else { return pick }
+            if weakT, centerShare < 0.375 { return pick }
+            SlotRecognitionDiagnostics.log(
+                "  suit template: ♣ winner but stem point + narrow margin → spades (♠=\(String(format: "%.3f", sSpade)) ♣=\(String(format: "%.3f", sClub)))"
+            )
+            return .spades
+        }
+
         return pick
     }
 
@@ -283,7 +407,8 @@ enum SuitTemplateShapeMatcher: Sendable {
                 lower += fillRaw[y * side + x]
             }
         }
-        if upper > lower * 1.08 {
+        let stemHint = spadeStemConeRatio(fillRaw: fillRaw, side: side)
+        if upper > lower * 1.12, (stemHint ?? 0) < 0.408 {
             return .clubs
         }
         if lower > upper * 1.12 {

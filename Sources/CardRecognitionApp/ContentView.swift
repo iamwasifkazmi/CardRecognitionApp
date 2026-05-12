@@ -269,7 +269,7 @@ private extension DetectedCardsTable {
                     .symbolRenderingMode(.monochrome)
             }
             .labelStyle(.titleAndIcon)
-            .foregroundStyle(Color.primary)
+            .foregroundStyle(suit.isRedSuit ? Color.red : Color.primary)
         } else {
             Text(card.suitColumnTitle)
                 .font(.callout.weight(.medium))

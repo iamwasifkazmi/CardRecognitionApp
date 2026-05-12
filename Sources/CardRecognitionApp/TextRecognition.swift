@@ -13,6 +13,84 @@ enum TextRecognition: Sendable {
         var averageConfidence: Float
     }
 
+    /// Focused OCR on the **top-left index stack** for **rank 7** — the small suit glyph under “7” is often missed by default ROIs.
+    static func cornerIndexSuitForRankSeven(
+        cardCrop: CGImage,
+        narrowColumn: Bool,
+        slotIndex: Int? = nil
+    ) -> String {
+        let rois: [CGRect] = narrowColumn
+            ? [
+                CGRect(x: 0.02, y: 0.12, width: 0.58, height: 0.55),
+                CGRect(x: 0.02, y: 0.26, width: 0.50, height: 0.44),
+            ]
+            : [
+                CGRect(x: 0.015, y: 0.18, width: 0.40, height: 0.50),
+                CGRect(x: 0.015, y: 0.26, width: 0.34, height: 0.42),
+                CGRect(x: 0.015, y: 0.32, width: 0.30, height: 0.36),
+            ]
+        return cornerIndexSuitPass(
+            cardCrop: cardCrop,
+            rois: rois,
+            slotIndex: slotIndex,
+            logKey: "rank7_index_suit"
+        )
+    }
+
+    /// **J / Q / K** — same problem as 7; also tries **bottom-right** mirrored index (some warps clip the top-left stack).
+    static func cornerIndexSuitForFaceRank(
+        cardCrop: CGImage,
+        narrowColumn: Bool,
+        slotIndex: Int? = nil
+    ) -> String {
+        let rois: [CGRect] = narrowColumn
+            ? [
+                CGRect(x: 0.02, y: 0.10, width: 0.60, height: 0.58),
+                CGRect(x: 0.02, y: 0.22, width: 0.55, height: 0.50),
+                CGRect(x: 0.18, y: 0.02, width: 0.78, height: 0.55),
+            ]
+            : [
+                CGRect(x: 0.012, y: 0.12, width: 0.46, height: 0.58),
+                CGRect(x: 0.012, y: 0.20, width: 0.40, height: 0.50),
+                CGRect(x: 0.012, y: 0.28, width: 0.36, height: 0.44),
+                CGRect(x: 0.46, y: 0.04, width: 0.52, height: 0.52),
+            ]
+        return cornerIndexSuitPass(
+            cardCrop: cardCrop,
+            rois: rois,
+            slotIndex: slotIndex,
+            logKey: "face_index_suit"
+        )
+    }
+
+    private static func cornerIndexSuitPass(
+        cardCrop: CGImage,
+        rois: [CGRect],
+        slotIndex: Int?,
+        logKey: String
+    ) -> String {
+        let scaled = cardCrop.upscaledForOCR(factor: 2) ?? cardCrop
+        var requests: [VNRecognizeTextRequest] = []
+        requests.reserveCapacity(rois.count)
+        for roi in rois {
+            let r = VNRecognizeTextRequest()
+            r.recognitionLevel = .accurate
+            r.usesLanguageCorrection = false
+            r.applyEnglishCardOCRHints()
+            r.regionOfInterest = roi
+            requests.append(r)
+        }
+        let handler = VNImageRequestHandler(cgImage: scaled, orientation: .up, options: [:])
+        try? handler.perform(requests)
+        let merged = requests.map { summarize($0.results).text }.filter { !$0.isEmpty }.joined(separator: " ")
+        if SlotRecognitionDiagnostics.isLoggingEnabled, let tag = slotIndex {
+            SlotRecognitionDiagnostics.log(
+                "OCR[slot \(tag)] \(logKey)='\(SlotRecognitionDiagnostics.ellipsis(merged, limit: 100))'"
+            )
+        }
+        return merged
+    }
+
     /// Reads indexing corners, a suit-pip strip, mirrored corner, and full-card pass.
     /// Pass `slotIndex` (1…5) to include this crop in Xcode console diagnostics when `SlotRecognitionDiagnostics.isLoggingEnabled`.
     static func extract(cardCrop: CGImage, slotIndex: Int? = nil) -> OCRSnapshot {
@@ -106,14 +184,30 @@ enum TextRecognition: Sendable {
             }
         }
 
-        /// iCloud / timing glitches sometimes leave every regional pass empty; a second `.fast` sweep can still recover glyphs.
+        /// iCloud / timing glitches sometimes leave every regional pass empty; `.fast` then `.accurate` full-frame passes often recover face-card indices.
         if combined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let rescue = fallbackFullCardPass(cgImage: cardCrop)
-            if rescue.text.isEmpty == false {
-                combined = rescue.text
-                whole = rescue
-                confs = [rescue.avg]
-                averageConfidence = rescue.avg
+            let rescueFast = fallbackFullCardPass(cgImage: cardCrop)
+            if rescueFast.text.isEmpty == false {
+                combined = rescueFast.text
+                whole = rescueFast
+                confs = [rescueFast.avg]
+                averageConfidence = rescueFast.avg
+            } else {
+                let rescueAccurate = fullFramePass(cgImage: cardCrop, recognitionLevel: .accurate)
+                if rescueAccurate.text.isEmpty == false {
+                    combined = rescueAccurate.text
+                    whole = rescueAccurate
+                    confs = [rescueAccurate.avg]
+                    averageConfidence = rescueAccurate.avg
+                } else if let scaled = cardCrop.upscaledForOCR(factor: 2) {
+                    let rescueScaled = fullFramePass(cgImage: scaled, recognitionLevel: .accurate)
+                    if rescueScaled.text.isEmpty == false {
+                        combined = rescueScaled.text
+                        whole = rescueScaled
+                        confs = [rescueScaled.avg]
+                        averageConfidence = rescueScaled.avg
+                    }
+                }
             }
         }
 
@@ -206,6 +300,32 @@ enum TextRecognition: Sendable {
         guard confidences.isEmpty == false else { return ("", 0) }
         let avg = confidences.reduce(0, +) / Float(confidences.count)
         return (text, avg)
+    }
+}
+
+private extension CGImage {
+    /// Bilinear upscale for OCR when native resolution returns no observations (e.g. some face-card crops).
+    func upscaledForOCR(factor: Int) -> CGImage? {
+        guard factor > 1 else { return self }
+        let nw = width * factor
+        let nh = height * factor
+        guard nw > 0, nh > 0,
+              let cs = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(
+                  data: nil,
+                  width: nw,
+                  height: nh,
+                  bitsPerComponent: 8,
+                  bytesPerRow: nw * 4,
+                  space: cs,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              )
+        else {
+            return nil
+        }
+        ctx.interpolationQuality = .high
+        ctx.draw(self, in: CGRect(x: 0, y: 0, width: nw, height: nh))
+        return ctx.makeImage()
     }
 }
 
