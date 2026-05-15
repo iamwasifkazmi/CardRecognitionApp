@@ -1,8 +1,14 @@
 #if os(iOS)
 import AVFoundation
 import CoreVideo
+import UIKit
 
 final class IOSCameraService: @unchecked Sendable {
+    /// `CGImage` is not `Sendable`; mirrors `ScannerViewModel`’s detached-analysis pattern.
+    private struct FrozenFrame: @unchecked Sendable {
+        let cgImage: CGImage
+    }
+
     private final class OutputBridge: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         weak var owner: IOSCameraService?
 
@@ -38,6 +44,24 @@ final class IOSCameraService: @unchecked Sendable {
             defer { lock.unlock() }
             return closure(latest)
         }
+
+        /// Copies the newest buffer reference for analysis (caller must finish before next deliver).
+        func copyLatest() -> CVPixelBuffer? {
+            lock.lock()
+            defer { lock.unlock() }
+            return latest
+        }
+    }
+
+    /// Live capture timing — lets autofocus settle, then freezes one upright frame for Vision (same stability as photo import).
+    private enum LiveCaptureTiming {
+        static let warmupMaxNs: UInt64 = 3_500_000_000
+        static let warmupPollNs: UInt64 = 50_000_000
+        /// Hold steady after orientation so preview matches analyzed pixels.
+        static let settleNs: UInt64 = 550_000_000
+        /// Extra polls so `mailbox` isn’t stuck on an earlier stale buffer right after reconnect/orientation.
+        static let freezePollAttempts = 12
+        static let freezePollSpacingNs: UInt64 = 45_000_000
     }
 
     private let mailbox = FrameMailbox()
@@ -87,39 +111,74 @@ final class IOSCameraService: @unchecked Sendable {
         }
     }
 
-    func performScan(interfaceOrientation cgOrientation: CGImagePropertyOrientation) async -> Result<CardVisionPipeline.ScanResult, Error> {
+    func performScan(interfaceOrientation: UIInterfaceOrientation) async -> Result<CardVisionPipeline.ScanResult, Error> {
 #if targetEnvironment(simulator)
         await Task.yield()
         return .failure(CameraDiagnosticsError.simulatorNoCameraHardware)
 #else
-        /// Session may still be spinning up the first buffers right after `startRunning()`; give it a short window.
-        let maxWaitNs: UInt64 = 2_500_000_000
-        let pollNs: UInt64 = 50_000_000
         var waited: UInt64 = 0
-        while waited < maxWaitNs {
+        while waited < LiveCaptureTiming.warmupMaxNs {
             let hasFrame = await hasPixelBufferInMailbox()
             if hasFrame { break }
-            try? await Task.sleep(nanoseconds: pollNs)
-            waited += pollNs
+            try? await Task.sleep(nanoseconds: LiveCaptureTiming.warmupPollNs)
+            waited += LiveCaptureTiming.warmupPollNs
         }
 
-        return await withCheckedContinuation { continuation in
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             sessionQueue.async {
-                let outcome: Result<CardVisionPipeline.ScanResult, Error> = self.mailbox.withLatest { buffer in
-                    guard let buffer else {
-                        return .failure(CameraDiagnosticsError.cameraWarmingUp)
-                    }
-                    do {
-                        let result = try CardVisionPipeline.analyze(pixelBuffer: buffer, orientation: cgOrientation)
-                        return .success(result)
-                    } catch {
-                        return .failure(error)
-                    }
-                }
-                continuation.resume(returning: outcome)
+                CaptureVideoOrientation.apply(
+                    to: self.videoOutput.connection(with: .video),
+                    interfaceOrientation: interfaceOrientation
+                )
+                continuation.resume()
             }
         }
+
+        /// Let autofocus / exposure catch up and give the user time to hold the row in frame.
+        try? await Task.sleep(nanoseconds: LiveCaptureTiming.settleNs)
+
+        let frozen = await freezeFrameForAnalysis(interfaceOrientation: interfaceOrientation)
+        guard let frozen else {
+            return .failure(CameraDiagnosticsError.cameraWarmingUp)
+        }
+
+        do {
+            let snapshot = try await Task.detached(priority: .userInitiated) {
+                try CardVisionPipeline.analyze(cgImage: frozen.cgImage)
+            }.value
+            return .success(snapshot)
+        } catch {
+            return .failure(error)
+        }
 #endif
+    }
+
+    /// Locks pixels into a `CGImage` on the video queue immediately (pool-safe), same path Vision uses for imports.
+    private func freezeFrameForAnalysis(interfaceOrientation: UIInterfaceOrientation) async -> FrozenFrame? {
+        for _ in 0 ..< LiveCaptureTiming.freezePollAttempts {
+            let frozen = await withCheckedContinuation { (continuation: CheckedContinuation<FrozenFrame?, Never>) in
+                videoDataQueue.async {
+                    guard let pb = self.mailbox.copyLatest() else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let exif = CaptureVideoOrientation.exifForAnalysis(
+                        pixelBuffer: pb,
+                        interfaceOrientation: interfaceOrientation
+                    )
+                    guard let cg = FrameNormalizer.uprightCGImage(pixelBuffer: pb, orientation: exif) else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    continuation.resume(returning: FrozenFrame(cgImage: cg))
+                }
+            }
+            if let frozen {
+                return frozen
+            }
+            try? await Task.sleep(nanoseconds: LiveCaptureTiming.freezePollSpacingNs)
+        }
+        return nil
     }
 
     private func hasPixelBufferInMailbox() async -> Bool {
@@ -163,16 +222,15 @@ final class IOSCameraService: @unchecked Sendable {
         }
 
         captureSession.addOutput(videoOutput)
-        /// Let the device/runtime pick dimensions/format when possible — strict BGRA can block delivery on some pipelines.
-        videoOutput.videoSettings = [:]
+        videoOutput.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        ]
         videoOutput.alwaysDiscardsLateVideoFrames = true
         videoOutput.setSampleBufferDelegate(delegate, queue: delegateQueue)
 
         if let conn = videoOutput.connection(with: .video) {
             conn.preferredVideoStabilizationMode = .off
-            if conn.isVideoOrientationSupported {
-                conn.videoOrientation = .portrait
-            }
+            CaptureVideoOrientation.apply(to: conn, interfaceOrientation: .portrait)
         }
 
         return nil

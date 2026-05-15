@@ -19,6 +19,8 @@ final class ScannerViewModel {
     var statusBanner: String?
     var latestScan: CardVisionPipeline.ScanResult?
     var isAnalyzing = false
+    /// True while the live camera is settling / bursting frames (longer than a file import).
+    var isAnalyzingLiveCapture = false
     var isImporterPresented = false
 
 #if os(iOS)
@@ -43,9 +45,14 @@ final class ScannerViewModel {
     func analyzeLiveScene() async {
         guard isAnalyzing == false else { return }
         isAnalyzing = true
-        defer { isAnalyzing = false }
+        isAnalyzingLiveCapture = true
+        defer {
+            isAnalyzing = false
+            isAnalyzingLiveCapture = false
+        }
 
-        let orientation = OrientationReader.preferredVideoOrientationHint().cgImageOrientationForPortraitCamera
+        statusBanner = "Hold steady — capturing the card row…"
+        let orientation = OrientationReader.preferredVideoOrientationHint()
         let outcome = await iosCamera.performScan(interfaceOrientation: orientation)
         switch outcome {
         case .success(let snapshot):

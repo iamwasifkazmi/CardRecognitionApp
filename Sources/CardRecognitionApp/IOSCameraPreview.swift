@@ -24,29 +24,17 @@ struct IOSCameraPreview: UIViewRepresentable {
         previewLayer.session = session
         previewLayer.videoGravity = .resizeAspectFill
 
-        guard let conn = previewLayer.connection, conn.isVideoOrientationSupported else {
-            return
-        }
-
         /// Prefer window-scene orientation (stable when lying flat vs `UIDevice.current.orientation`).
-        if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
-            switch scene.interfaceOrientation {
-            case .portrait:
-                conn.videoOrientation = .portrait
-            case .portraitUpsideDown:
-                conn.videoOrientation = .portraitUpsideDown
-            case .landscapeLeft:
-                conn.videoOrientation = .landscapeRight
-            case .landscapeRight:
-                conn.videoOrientation = .landscapeLeft
-            @unknown default:
-                conn.videoOrientation = .portrait
-            }
-        } else {
-            conn.videoOrientation = .portrait
-        }
+        let interface = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?
+            .interfaceOrientation ?? .portrait
+        CaptureVideoOrientation.apply(to: previewLayer.connection, interfaceOrientation: interface)
 
-        if conn.isVideoMirroringSupported, let videoInput = session.inputs.compactMap({ $0 as? AVCaptureDeviceInput }).first(where: { $0.device.hasMediaType(.video) }) {
+        if let conn = previewLayer.connection,
+           conn.isVideoMirroringSupported,
+           let videoInput = session.inputs.compactMap({ $0 as? AVCaptureDeviceInput }).first(where: { $0.device.hasMediaType(.video) })
+        {
             conn.isVideoMirrored = videoInput.device.position == .front
         }
     }

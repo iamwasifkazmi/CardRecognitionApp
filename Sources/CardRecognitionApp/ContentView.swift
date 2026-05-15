@@ -80,7 +80,7 @@ private struct SlotScannerDashboard: View {
                 }
 
                 if model.isAnalyzing {
-                    ProgressView("Reading five-slot row…")
+                    ProgressView(model.isAnalyzingLiveCapture ? "Hold steady — reading five cards…" : "Reading five-slot row…")
                         .frame(maxWidth: .infinity)
                 }
 

@@ -40,6 +40,12 @@ struct CardRecognitionParserTests {
         #expect(CardTextParser.parseRank(from: "left K right") == .king)
     }
 
+    @Test(arguments: ["Qf", "Qf pip", "Kr", "Jr"])
+    func courtRankWithTrailingOCRNoise(_ raw: String) {
+        let rank = CardTextParser.parseRank(from: raw)
+        #expect(rank == .queen || rank == .king || rank == .jack)
+    }
+
     @Test(arguments: ["LO", "L0", "LO of", "LOof fifo", "L0of x", "io", "1O", "IO • x"])
     func ocrMisreadTen(_ raw: String) {
         #expect(CardTextParser.parseRank(from: raw) == .ten)
@@ -62,6 +68,31 @@ struct CardRecognitionParserTests {
         #expect(snapshot.cards.count == 5)
     }
 }
+
+#if os(iOS)
+@Suite("Live camera orientation")
+struct CaptureVideoOrientationTests {
+    @Test
+    func portraitSizedBufferSkipsExtraRotation() {
+        let exif = CaptureVideoOrientation.exifForAnalysis(
+            pixelWidth: 1080,
+            pixelHeight: 1920,
+            interfaceOrientation: .portrait
+        )
+        #expect(exif == .up)
+    }
+
+    @Test
+    func landscapeSizedBufferUsesInterfaceTag() {
+        let exif = CaptureVideoOrientation.exifForAnalysis(
+            pixelWidth: 1920,
+            pixelHeight: 1080,
+            interfaceOrientation: .portrait
+        )
+        #expect(exif == .right)
+    }
+}
+#endif
 
 #if os(iOS)
 import UIKit

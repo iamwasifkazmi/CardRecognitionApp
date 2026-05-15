@@ -7,6 +7,7 @@ enum CardTextParser: Sendable {
         let normalized = normalizeOCRDigitArtifacts(folded)
         if let r = rankRegexpMatch(normalized) { return r }
         if let r = rankAnywhereMatch(normalized) { return r }
+        if let r = courtRankWithNoiseMatch(normalized) { return r }
         if let r = heuristicRank(normalized.uppercased()) { return r }
         return relaxedDigitRank(normalized)
     }
@@ -107,6 +108,12 @@ enum CardTextParser: Sendable {
         options: [.caseInsensitive]
     )
 
+    /// Vision often appends a stray letter to court glyphs (`Qf`, `K|`, `Jr`).
+    private static let courtRankWithOCRNoiseRegexp = try? NSRegularExpression(
+        pattern: #"\b(10|[2-9]|A|[KQJ])[A-Za-z]{0,2}\b"#,
+        options: [.caseInsensitive]
+    )
+
     private static let splitDigitTenRegexp = try? NSRegularExpression(
         pattern: #"\b(?:1\s+0|0\s+1)\b"#,
         options: [.caseInsensitive]
@@ -189,6 +196,17 @@ enum CardTextParser: Sendable {
 
     private static func rankAnywhereMatch(_ folded: String) -> Rank? {
         guard let regex = rankAnywhereRegexp else { return nil }
+        let ns = folded as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        guard let match = regex.firstMatch(in: folded, options: [], range: range), match.numberOfRanges >= 2 else {
+            return nil
+        }
+        let token = ns.substring(with: match.range(at: 1)).uppercased()
+        return rankToken(token)
+    }
+
+    private static func courtRankWithNoiseMatch(_ folded: String) -> Rank? {
+        guard let regex = courtRankWithOCRNoiseRegexp else { return nil }
         let ns = folded as NSString
         let range = NSRange(location: 0, length: ns.length)
         guard let match = regex.firstMatch(in: folded, options: [], range: range), match.numberOfRanges >= 2 else {
