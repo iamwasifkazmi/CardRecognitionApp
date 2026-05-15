@@ -69,7 +69,13 @@ enum TextRecognition: Sendable {
         slotIndex: Int?,
         logKey: String
     ) -> String {
-        let scaled = cardCrop.upscaledForOCR(factor: 2) ?? cardCrop
+        let scaled: CGImage = {
+            let m = min(cardCrop.width, cardCrop.height)
+            if m < 360 {
+                return cardCrop.upscaledForOCR(factor: 3) ?? cardCrop.upscaledForOCR(factor: 2) ?? cardCrop
+            }
+            return cardCrop.upscaledForOCR(factor: 2) ?? cardCrop
+        }()
         var requests: [VNRecognizeTextRequest] = []
         requests.reserveCapacity(rois.count)
         for roi in rois {
@@ -95,6 +101,17 @@ enum TextRecognition: Sendable {
     /// Pass `slotIndex` (1…5) to include this crop in Xcode console diagnostics when `SlotRecognitionDiagnostics.isLoggingEnabled`.
     static func extract(cardCrop: CGImage, slotIndex: Int? = nil) -> OCRSnapshot {
         let narrowColumn = normalizedCardCropWidth(cardCrop) < 0.52
+        let minPx = min(cardCrop.width, cardCrop.height)
+        /// Camera / preview crops are often shorter than sharp gallery exports — extra upscaling keeps index glyphs in Vision’s comfort zone.
+        let ocrBase: CGImage = {
+            if minPx < 300 {
+                return cardCrop.upscaledForOCR(factor: 3) ?? cardCrop.upscaledForOCR(factor: 2) ?? cardCrop
+            }
+            if narrowColumn || minPx < 520 {
+                return cardCrop.upscaledForOCR(factor: 2) ?? cardCrop
+            }
+            return cardCrop
+        }()
 
         let strip = VNRecognizeTextRequest()
         strip.recognitionLevel = .accurate
@@ -145,7 +162,7 @@ enum TextRecognition: Sendable {
         pipField.applyEnglishCardOCRHints()
         pipField.regionOfInterest = CGRect(x: 0.14, y: 0.20, width: 0.74, height: 0.52)
 
-        let handler = VNImageRequestHandler(cgImage: cardCrop, orientation: .up, options: [:])
+        let handler = VNImageRequestHandler(cgImage: ocrBase, orientation: .up, options: [:])
         try? handler.perform([strip, suitStrip, bottomStrip, pipField, full, leftBand])
 
         let top = summarize(strip.results)
@@ -170,7 +187,7 @@ enum TextRecognition: Sendable {
             bottom: bottom.text,
             narrowColumn: narrowColumn
         ) {
-            let fastExtra = fallbackFullCardPass(cgImage: cardCrop)
+            let fastExtra = fallbackFullCardPass(cgImage: ocrBase)
             if fastExtra.text.isEmpty == false {
                 usedFastFullFrameSupplement = true
                 combined = [combined, fastExtra.text].filter { !$0.isEmpty }.joined(separator: "\n")
@@ -186,20 +203,20 @@ enum TextRecognition: Sendable {
 
         /// iCloud / timing glitches sometimes leave every regional pass empty; `.fast` then `.accurate` full-frame passes often recover face-card indices.
         if combined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let rescueFast = fallbackFullCardPass(cgImage: cardCrop)
+            let rescueFast = fallbackFullCardPass(cgImage: ocrBase)
             if rescueFast.text.isEmpty == false {
                 combined = rescueFast.text
                 whole = rescueFast
                 confs = [rescueFast.avg]
                 averageConfidence = rescueFast.avg
             } else {
-                let rescueAccurate = fullFramePass(cgImage: cardCrop, recognitionLevel: .accurate)
+                let rescueAccurate = fullFramePass(cgImage: ocrBase, recognitionLevel: .accurate)
                 if rescueAccurate.text.isEmpty == false {
                     combined = rescueAccurate.text
                     whole = rescueAccurate
                     confs = [rescueAccurate.avg]
                     averageConfidence = rescueAccurate.avg
-                } else if let scaled = cardCrop.upscaledForOCR(factor: 2) {
+                } else if ocrBase.width == cardCrop.width, let scaled = cardCrop.upscaledForOCR(factor: 2) {
                     let rescueScaled = fullFramePass(cgImage: scaled, recognitionLevel: .accurate)
                     if rescueScaled.text.isEmpty == false {
                         combined = rescueScaled.text
@@ -214,7 +231,7 @@ enum TextRecognition: Sendable {
         if SlotRecognitionDiagnostics.isLoggingEnabled, let tag = slotIndex {
             SlotRecognitionDiagnostics.log(
                 """
-                OCR[slot \(tag)] skinnyColumn=\(narrowColumn) \(cardCrop.width)×\(cardCrop.height) px | \
+                OCR[slot \(tag)] skinnyColumn=\(narrowColumn) \(cardCrop.width)×\(cardCrop.height) px ocrBase=\(ocrBase.width)×\(ocrBase.height) | \
                 corner='\(SlotRecognitionDiagnostics.ellipsis(top.text, limit: 60))' | \
                 suitROI='\(SlotRecognitionDiagnostics.ellipsis(suitC.text, limit: 60))' | \
                 mirror='\(SlotRecognitionDiagnostics.ellipsis(bottom.text, limit: 60))' | \
@@ -275,6 +292,7 @@ enum TextRecognition: Sendable {
         if trimmed.count < 2 { return true }
         /// Skinny column + only the full-frame pass hinted text — bracket ROIs likely missed glyphs.
         if narrowColumn, top.isEmpty, bottom.isEmpty, trimmed.count < 14 { return true }
+        if narrowColumn, top.trimmingCharacters(in: .whitespacesAndNewlines).count < 2, trimmed.count < 28 { return true }
         return false
     }
 
@@ -333,5 +351,15 @@ private extension VNRecognizeTextRequest {
     /// Reduce accidental non-Latin “phantom text” when reading simple slot artwork.
     func applyEnglishCardOCRHints() {
         recognitionLanguages = ["en-US"]
+        customWords = [
+            "10", "2", "3", "4", "5", "6", "7", "8", "9",
+            "A", "J", "Q", "K",
+            "ACE", "JACK", "QUEEN", "KING",
+            "♠", "♥", "♦", "♣", "♤", "♡", "♢", "♧",
+            "spades", "spade", "hearts", "heart", "diamonds", "diamond", "clubs", "club",
+        ]
+        if #available(iOS 16.0, macOS 13.0, *) {
+            revision = VNRecognizeTextRequestRevision3
+        }
     }
 }

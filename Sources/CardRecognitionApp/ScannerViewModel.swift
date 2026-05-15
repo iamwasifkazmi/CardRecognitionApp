@@ -19,6 +19,8 @@ final class ScannerViewModel {
     var statusBanner: String?
     var latestScan: CardVisionPipeline.ScanResult?
     var isAnalyzing = false
+    /// Shown under the progress indicator during live camera multi-frame capture.
+    var liveScanPhase: String?
     var isImporterPresented = false
 
 #if os(iOS)
@@ -43,14 +45,25 @@ final class ScannerViewModel {
     func analyzeLiveScene() async {
         guard isAnalyzing == false else { return }
         isAnalyzing = true
-        defer { isAnalyzing = false }
+        liveScanPhase = nil
+        defer {
+            isAnalyzing = false
+            liveScanPhase = nil
+        }
 
         let orientation = OrientationReader.preferredVideoOrientationHint().cgImageOrientationForPortraitCamera
-        let outcome = await iosCamera.performScan(interfaceOrientation: orientation)
+        let outcome = await iosCamera.performScan(interfaceOrientation: orientation) { [weak self] message in
+            Task { @MainActor in
+                self?.liveScanPhase = message
+            }
+        }
         switch outcome {
         case .success(let snapshot):
             latestScan = snapshot
-            statusBanner = "Analyzed five cards in one snapshot."
+            statusBanner = """
+Captured one still image from the camera (full resolution when supported), then read the row a single time. \
+Slot order stays left-to-right from that frozen frame—no live multi-frame merge.
+"""
         case .failure(let error):
             latestScan = nil
             statusBanner = error.localizedDescription

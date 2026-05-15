@@ -24,7 +24,7 @@ enum PerspectiveCorrection: Sendable {
     static func warpedCardCGImage(
         pixelBuffer: CVPixelBuffer,
         observation: VNRectangleObservation,
-        targetSize: CGSize = CGSize(width: 360, height: 504)
+        targetSize: CGSize = CGSize(width: 480, height: 672)
     ) -> CGImage? {
         let base = CIImage(cvPixelBuffer: pixelBuffer)
         return warpedCardCGImage(base: base, observation: observation, targetSize: targetSize)
@@ -34,7 +34,7 @@ enum PerspectiveCorrection: Sendable {
     static func warpedCardCGImage(
         base: CIImage,
         observation: VNRectangleObservation,
-        targetSize: CGSize = CGSize(width: 360, height: 504)
+        targetSize: CGSize = CGSize(width: 480, height: 672)
     ) -> CGImage? {
         let extent = base.extent
         let w = extent.width
@@ -64,7 +64,7 @@ enum PerspectiveCorrection: Sendable {
     static func croppedCardCGImage(
         pixelBuffer: CVPixelBuffer,
         normalizedRect: CGRect,
-        targetSize: CGSize = CGSize(width: 360, height: 504)
+        targetSize: CGSize = CGSize(width: 480, height: 672)
     ) -> CGImage? {
         let base = CIImage(cvPixelBuffer: pixelBuffer)
         return croppedCardCGImage(base: base, normalizedRect: normalizedRect, targetSize: targetSize)
@@ -74,7 +74,7 @@ enum PerspectiveCorrection: Sendable {
     static func croppedCardCGImage(
         base: CIImage,
         normalizedRect: CGRect,
-        targetSize: CGSize = CGSize(width: 360, height: 504)
+        targetSize: CGSize = CGSize(width: 480, height: 672)
     ) -> CGImage? {
         let extent = base.extent
         let w = extent.width

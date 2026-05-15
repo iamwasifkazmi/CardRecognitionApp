@@ -3,6 +3,20 @@ import Testing
 
 @Suite("Card parsers")
 struct CardRecognitionParserTests {
+    @Test
+    func desktopChromeSnippetIsNotPlausible() {
+        let s = "14 MacBook Pro 04_45_25 PM.png"
+        #expect(CardTextParser.looksLikeUIScreenshotText(s))
+        #expect(CardTextParser.isPlausibleOCRSnippet(s) == false)
+    }
+
+    @Test
+    func developerIDEChromeSnippetIsNotPlausible() {
+        let s = "Q CardRecognitionApp Connecting iOS devi_. × Agents Windoe A swift prolecer"
+        #expect(CardTextParser.looksLikeDeveloperIDEChrome(s))
+        #expect(CardTextParser.isPlausibleOCRSnippet(s) == false)
+    }
+
     @Test(arguments: ["10♠", "10 ♠"])
     func parseTenOfSpades(_ text: String) {
         let rank = CardTextParser.parseRank(from: text)

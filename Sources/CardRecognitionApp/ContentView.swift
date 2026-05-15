@@ -80,8 +80,16 @@ private struct SlotScannerDashboard: View {
                 }
 
                 if model.isAnalyzing {
-                    ProgressView("Reading five-slot row…")
-                        .frame(maxWidth: .infinity)
+                    VStack(spacing: 8) {
+                        ProgressView("Capturing & reading…")
+                        if let phase = model.liveScanPhase, phase.isEmpty == false {
+                            Text(phase)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
                 }
 
                 if let snapshot = model.latestScan {
@@ -102,7 +110,7 @@ private struct SlotScannerDashboard: View {
                             .padding(.top, 4)
                         Text(
                             """
-                            • Use a steady, well-lit view of the card row; reduce glare on shiny UI.\n• For best OCR, prefer a sharp screenshot over a motion-blurred photo.\n• You can revoke camera access anytime in Settings ▸ Privacy ▸ Camera.
+                            • The camera flow freezes **one** high-res still, then reads it—frame the row, hold steady, then tap. Reduce glare on shiny screens.\n• For best OCR, a screenshot imported from Photos is still the steadiest source.\n• You can revoke camera access anytime in Settings ▸ Privacy ▸ Camera.
                             """
                         )
                     }
@@ -123,7 +131,7 @@ private struct SlotScannerDashboard: View {
                 Button {
                     Task { await model.analyzeLiveScene() }
                 } label: {
-                    Label("Capture & read", systemImage: "camera.viewfinder")
+                    Label("Still capture & read", systemImage: "camera.viewfinder")
                 }
                 .disabled(model.isAnalyzing)
 #endif

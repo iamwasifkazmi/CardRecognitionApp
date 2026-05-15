@@ -5,9 +5,13 @@ enum CardTextParser: Sendable {
     static func parseRank(from raw: String) -> Rank? {
         let folded = raw.folding(options: .diacriticInsensitive, locale: .current)
         let normalized = normalizeOCRDigitArtifacts(folded)
+        if looksLikeSymbolicNoise(folded) {
+            return heuristicRank(normalized.uppercased())
+        }
         if let r = rankRegexpMatch(normalized) { return r }
         if let r = rankAnywhereMatch(normalized) { return r }
         if let r = heuristicRank(normalized.uppercased()) { return r }
+        if looksLikeOCRNoiseLayout(folded) { return nil }
         return relaxedDigitRank(normalized)
     }
 
@@ -33,8 +37,80 @@ enum CardTextParser: Sendable {
         return nil
     }
 
+    /// Window chrome, filenames, and hardware blurbs from **desktop screenshots** — not playing-card OCR.
+    static func looksLikeUIScreenshotText(_ raw: String) -> Bool {
+        let lower = raw.folding(options: .diacriticInsensitive, locale: .current).lowercased()
+        let needles: [String] = [
+            "macbook", "macbock", "macb ", "bock pro", "book pro",
+            "command option", "command aption", "command opt", "nd option",
+            "commend option", "commend opt", "command optic",
+            "iphone", "ipad",
+            ".png", ".jpg", ".jpeg", ".heic", ".gif", ".prg", ".peg", ".pdf",
+            "window help", "wndow", "widow", "game nd", "safari", "chrome",
+            "kb edit", "edit optr", "edit ontr", "edit oftr", "edit op ", "edit em",
+            "optr ", " optr", "ontre", "oftr", "vacen",
+            "mail ", "icloud", "cnict", "gone sing", "rtnl ", "sewch",
+            "live cam", "detected", "unknown suit", "refresh",
+            "seconds", "single =", "merel screem", "screem",
+        ]
+        for n in needles where lower.contains(n) { return true }
+        if lower.range(of: #"20\d{2}.*\d{2}[_:.,]\s*\d{2}"#, options: .regularExpression) != nil {
+            return true
+        }
+        return false
+    }
+
+    /// Xcode / Simulator / “Connecting iOS device…” style text — never treat as card rank/suit.
+    static func looksLikeDeveloperIDEChrome(_ raw: String) -> Bool {
+        let lower = raw.folding(options: .diacriticInsensitive, locale: .current).lowercased()
+        let needles: [String] = [
+            "xcode", "xcod", "devtools", "swift pro", "swiftproc", "swiftpro",
+            "connecting ios", "ios devi", "simulator", "cardrecognition",
+            "recognitionapo", "recognition ap", "cogritian", "agents wind", "agents window",
+            "windoe", "prolecer", "proleca", "otlm-", " otlm", "anapp ", "card recog",
+        ]
+        for n in needles where lower.contains(n) { return true }
+        if lower.contains("connecting"), lower.contains("ios") { return true }
+        if lower.contains("agent"), lower.contains("swift") { return true }
+        if lower.contains("git "), lower.contains("swift") { return true }
+        return false
+    }
+
+    /// Moiré / LCD reads: pipes, `@`, path-like slashes, repeated **ol** fragments — not card corners (but can still trip relaxed digit rank).
+    static func looksLikeOCRNoiseLayout(_ raw: String) -> Bool {
+        if raw.filter({ $0 == "|" }).count >= 2 { return true }
+        if raw.contains("@"), raw.count > 18 { return true }
+        if raw.filter({ $0 == "/" }).count >= 3, raw.contains("|") { return true }
+        let lower = raw.lowercased()
+        if lower.range(of: #"ol.{0,3}ol.{0,3}ol"#, options: .regularExpression) != nil { return true }
+        if lower.contains(" git "), lower.contains("git o"), lower.contains("ollg") { return true }
+        if raw.filter({ $0 == "/" }).count >= 2, raw.count > 20 { return true }
+        return false
+    }
+
+    /// LCD moiré / UI shards: lots of `+*` / punctuation with almost no clean card glyphs.
+    static func looksLikeSymbolicNoise(_ raw: String) -> Bool {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.isEmpty == false else { return false }
+        if t.contains("*"), t.contains("+") { return true }
+        if t.filter({ $0 == "+" }).count >= 2 { return true }
+        let sym = t.filter { "*+=%^$#@~`\\|/<>[]{}()•·…‹›".contains($0) }.count
+        if sym >= 2, t.count <= 28 { return true }
+        if sym >= 3, t.count <= 48 { return true }
+        return false
+    }
+
     /// True when the string is mostly Latin / digits / card symbols ( Vision sometimes emits Cyrillic noise in pips).
     static func isPlausibleOCRSnippet(_ raw: String) -> Bool {
+        if looksLikeUIScreenshotText(raw) { return false }
+        if looksLikeDeveloperIDEChrome(raw) { return false }
+        if looksLikeOCRNoiseLayout(raw) { return false }
+        if looksLikeSymbolicNoise(raw) { return false }
+        /// Timer / phone-ID lines (`090 5192 4630…`) are not card corners.
+        if raw.count > 26 {
+            let digitCount = raw.filter(\.isNumber).count
+            if Float(digitCount) / Float(raw.count) > 0.38 { return false }
+        }
         if raw.count > 120 { return false }
         let scalars = raw.unicodeScalars
         var garbage = 0
@@ -74,6 +150,11 @@ enum CardTextParser: Sendable {
             default:
                 continue
             }
+        }
+
+        let compact = folds.filter { $0.isWhitespace == false }
+        if compact.count < 2 {
+            return nil
         }
 
         guard let regex = suitLetterRegexp else { return nil }
