@@ -61,7 +61,7 @@ enum CardVisionPipeline: Sendable {
             case .column(let rect):
                 SlotRecognitionDiagnostics.log("  mode=fiveColumnSlice")
                 SlotRecognitionDiagnostics.logRectNorm("  column rect(norm)", rect)
-                warped = PerspectiveCorrection.croppedCardCGImage(base: ciBase, normalizedRect: rect)
+                warped = PerspectiveCorrection.croppedColumnCGImage(base: ciBase, normalizedRect: rect)
             }
 
             guard let cardImage = warped else {
@@ -76,16 +76,29 @@ enum CardVisionPipeline: Sendable {
             }
 
             SlotRecognitionDiagnostics.log("  crop pixels: \(cardImage.width)×\(cardImage.height)")
-            let ocr = TextRecognition.extract(cardCrop: cardImage, slotIndex: idx + 1)
+            let rowSliceColumn: Bool
+            if case .column = pick { rowSliceColumn = true } else { rowSliceColumn = false }
+            let ocr = TextRecognition.extract(
+                cardCrop: cardImage,
+                slotIndex: idx + 1,
+                rowSliceColumn: rowSliceColumn
+            )
             let mlBest = classifyWithCoreMLIfAvailable(cardImage)
 
-            let rankSources = [
-                ocr.topStripText,
-                ocr.suitCornerText,
-                ocr.bottomStripText,
-                ocr.fullCardText,
-                ocr.combinedText,
-            ]
+            let rowIndexSuit = rowSliceColumn
+                ? TextRecognition.cornerIndexSuitForRowSlice(cardCrop: cardImage, slotIndex: idx + 1)
+                : ""
+
+            /// Five-column reel crops: index corners + left band; full frame only when not a row slice (avoids BET/CREDIT).
+            let rankSources: [String] = rowSliceColumn
+                ? [
+                    ocr.topStripText,
+                    ocr.suitCornerText,
+                    ocr.leftBandText,
+                    ocr.bottomStripText,
+                    ocr.pipCentralText,
+                ]
+                : [ocr.topStripText, ocr.suitCornerText, ocr.bottomStripText, ocr.fullCardText, ocr.combinedText]
 
             let rank = mlBest.flatMap { CardTextParser.parseRank(from: $0.identifier) }
                 ?? CardTextParser.firstRank(in: rankSources)
@@ -94,27 +107,38 @@ enum CardVisionPipeline: Sendable {
             let rankSevenCornerSuit = rank == .seven
                 ? TextRecognition.cornerIndexSuitForRankSeven(
                     cardCrop: cardImage,
-                    narrowColumn: narrowCrop,
+                    narrowColumn: narrowCrop || rowSliceColumn,
                     slotIndex: idx + 1
                 )
                 : ""
             let faceCornerSuit = rank?.isCourtRank == true
                 ? TextRecognition.cornerIndexSuitForFaceRank(
                     cardCrop: cardImage,
-                    narrowColumn: narrowCrop,
+                    narrowColumn: narrowCrop || rowSliceColumn,
                     slotIndex: idx + 1
                 )
                 : ""
 
-            let suitSources = [
-                rankSevenCornerSuit,
-                faceCornerSuit,
-                ocr.topStripText,
-                ocr.suitCornerText,
-                ocr.bottomStripText,
-                ocr.fullCardText,
-                ocr.combinedText,
-            ]
+            let suitSources: [String] = rowSliceColumn
+                ? [
+                    rowIndexSuit,
+                    rankSevenCornerSuit,
+                    faceCornerSuit,
+                    ocr.suitCornerText,
+                    ocr.topStripText,
+                    ocr.pipCentralText,
+                    ocr.bottomStripText,
+                    ocr.leftBandText,
+                ]
+                : [
+                    rankSevenCornerSuit,
+                    faceCornerSuit,
+                    ocr.topStripText,
+                    ocr.suitCornerText,
+                    ocr.bottomStripText,
+                    ocr.fullCardText,
+                    ocr.combinedText,
+                ]
 
             var suit = mlBest.flatMap { CardTextParser.parseSuit(from: $0.identifier) }
                 ?? CardTextParser.firstSuit(in: suitSources)
@@ -146,6 +170,18 @@ enum CardVisionPipeline: Sendable {
                 if suit == nil, rank != nil, redHint == false, allowBlackSilhouetteFallback {
                     suit = SuitTemplateShapeMatcher.inferBlackSuitsOnly(for: cardImage)
                     suitFromShape = suit != nil
+                }
+                /// Reel columns: chromatic pip color beats ♥/♦ silhouette when court art skews templates.
+                if rowSliceColumn, pigment, let chroma = SuitColorHeuristic.infer(for: cardImage) {
+                    if suit == nil {
+                        suit = chroma
+                        suitFromColor = true
+                        suitFromShape = false
+                    } else if suitFromShape, chroma != suit {
+                        suit = chroma
+                        suitFromColor = true
+                        suitFromShape = false
+                    }
                 }
             } else if rank == .seven, suit == nil {
                 SlotRecognitionDiagnostics.log(
@@ -314,8 +350,9 @@ private enum CardRectangleSelector {
 
         if kept.isEmpty {
             SlotRecognitionDiagnostics.log("strategy=SYNTHETIC_fallback_strip (no Vision rectangles passed filters)")
-            /// Slot reels are usually centered — this synthetic strip keeps the workflow alive for manual tuning.
-            return fiveColumns(in: CGRect(x: 0.03, y: 0.18, width: 0.94, height: 0.64))
+            let synthetic = syntheticFallbackStrip(canvasAspect: canvasAR)
+            logCardRowBandIfTrimmed(original: synthetic)
+            return fiveColumns(in: cardRowBand(in: synthetic))
         }
 
         /// Vision often finds only 2–4 rectangles (see partial yellow boxes on some photos). Using those crops alone
@@ -325,7 +362,16 @@ private enum CardRectangleSelector {
             if box.width >= 0.36 {
                 SlotRecognitionDiagnostics.log("strategy=SPLIT_one_wide_rectangle_into_5_columns")
                 SlotRecognitionDiagnostics.logRectNorm("strip", box)
-                return fiveColumns(in: box)
+                logCardRowBandIfTrimmed(original: box)
+                return fiveColumns(in: cardRowBand(in: box))
+            }
+            if canvasAR < 0.95 {
+                SlotRecognitionDiagnostics.log(
+                    "strategy=single_card_bbox_on_portrait → synthetic five-column strip (not one-card perspective)"
+                )
+                let synthetic = syntheticFallbackStrip(canvasAspect: canvasAR)
+                logCardRowBandIfTrimmed(original: synthetic)
+                return fiveColumns(in: cardRowBand(in: synthetic))
             }
             SlotRecognitionDiagnostics.log("strategy=single_tight_rectangle_perspective_only (no split)")
             return [.perspective(kept[0])]
@@ -337,7 +383,8 @@ private enum CardRectangleSelector {
         if rowLike {
             SlotRecognitionDiagnostics.log("strategy=SPLIT_union_of_partial_rectangles_into_5_columns")
             SlotRecognitionDiagnostics.logRectNorm("union", unionBox)
-            return fiveColumns(in: unionBox)
+            logCardRowBandIfTrimmed(original: unionBox)
+            return fiveColumns(in: cardRowBand(in: unionBox))
         }
 
         SlotRecognitionDiagnostics.log("strategy=FALLBACK_individual_perspective_only count=\(kept.count) (union not row-like)")
@@ -355,6 +402,44 @@ private enum CardRectangleSelector {
             rect = rect.union(obs.boundingBox)
         }
         return rect
+    }
+
+    /// Portrait phone photos of a horizontal reel: avoid a tall synthetic hull that swallows WIN/BET/CREDIT under the row.
+    private static func syntheticFallbackStrip(canvasAspect: CGFloat) -> CGRect {
+        if canvasAspect < 0.95 {
+            return CGRect(x: 0.03, y: 0.33, width: 0.94, height: 0.28)
+        }
+        if canvasAspect >= 2.35 {
+            return CGRect(x: 0.02, y: 0.20, width: 0.96, height: 0.44)
+        }
+        return CGRect(x: 0.03, y: 0.18, width: 0.94, height: 0.36)
+    }
+
+    /// Vision often returns one wide box around **cards + status bar**. Trim the lower band (Vision `y` is bottom-origin).
+    private static func cardRowBand(in strip: CGRect) -> CGRect {
+        let rowAspect = strip.width / max(strip.height, 0.001)
+        guard rowAspect >= 2.0 else { return strip }
+        let keep: CGFloat
+        if rowAspect >= 3.5 {
+            keep = 0.72
+        } else if strip.height > 0.38 {
+            keep = 0.58
+        } else {
+            keep = 0.70
+        }
+        guard keep < 0.99 else { return strip }
+        var band = strip
+        let trimmedFromBottom = strip.height * (1 - keep)
+        band.origin.y += trimmedFromBottom
+        band.size.height *= keep
+        return clip(band)
+    }
+
+    private static func logCardRowBandIfTrimmed(original: CGRect) {
+        let band = cardRowBand(in: original)
+        guard band != original else { return }
+        SlotRecognitionDiagnostics.log("cardRowBand: trimmed status chrome below five-card row")
+        SlotRecognitionDiagnostics.logRectNorm("cardRowBand", band)
     }
 
     private static func fiveColumns(in normalized: CGRect) -> [Pick] {

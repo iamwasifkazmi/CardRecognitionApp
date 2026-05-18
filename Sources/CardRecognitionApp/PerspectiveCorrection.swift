@@ -70,6 +70,31 @@ enum PerspectiveCorrection: Sendable {
         return croppedCardCGImage(base: base, normalizedRect: normalizedRect, targetSize: targetSize)
     }
 
+    /// Reel **column** crop: keep native aspect (short wide strips) instead of stretching to a tall playing-card frame.
+    static func croppedColumnCGImage(
+        base: CIImage,
+        normalizedRect: CGRect
+    ) -> CGImage? {
+        let extent = base.extent
+        let w = extent.width
+        let h = extent.height
+        let pixelRect = CGRect(
+            x: extent.minX + normalizedRect.minX * w,
+            y: extent.minY + normalizedRect.minY * h,
+            width: normalizedRect.width * w,
+            height: normalizedRect.height * h
+        ).integral
+        guard pixelRect.width > 8, pixelRect.height > 8 else { return nil }
+        let sourceAspect = pixelRect.width / pixelRect.height
+        let targetW: CGFloat = 360
+        let targetH = min(504, max(220, targetW / sourceAspect))
+        return croppedCardCGImage(
+            base: base,
+            normalizedRect: normalizedRect,
+            targetSize: CGSize(width: targetW, height: targetH)
+        )
+    }
+
     /// Axis-aligned crop + scale used when five equal slots are synthesized.
     static func croppedCardCGImage(
         base: CIImage,

@@ -56,6 +56,28 @@ struct CardRecognitionParserTests {
         #expect(CardTextParser.parseRank(from: "RET F 8 zz") == .eight)
     }
 
+    @Test(arguments: [
+        "WIN",
+        "CREDIT 125",
+        "2 REDIT 125",
+        "BET 5 259",
+        "REDIT 2",
+    ])
+    func slotMachineChromeIsIgnoredForRank(_ raw: String) {
+        #expect(CardTextParser.isSlotMachineChromeText(raw))
+        #expect(CardTextParser.firstRank(in: [raw]) == nil)
+    }
+
+    @Test
+    func rankStillFoundWhenChromeIsNotTheWholeString() {
+        #expect(CardTextParser.firstRank(in: ["corner 9", "WIN"]) == .nine)
+    }
+
+    @Test(arguments: ["O1", "O 1", "O l"])
+    func ocrMisreadNine(_ raw: String) {
+        #expect(CardTextParser.parseRank(from: raw) == .nine)
+    }
+
     @Test(arguments: ["1 0", "0 1", "1\n0"])
     func visionSplitDigitsTen(_ raw: String) {
         #expect(CardTextParser.parseRank(from: raw) == .ten)

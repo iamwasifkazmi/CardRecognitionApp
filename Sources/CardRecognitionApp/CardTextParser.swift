@@ -16,7 +16,10 @@ enum CardTextParser: Sendable {
     static func firstRank(in sources: [String]) -> Rank? {
         for raw in sources {
             for chunk in ocrChunks(from: raw) {
-                guard chunk.isEmpty == false, isPlausibleOCRSnippet(chunk) else { continue }
+                guard chunk.isEmpty == false,
+                      isPlausibleOCRSnippet(chunk),
+                      isSlotMachineChromeText(chunk) == false
+                else { continue }
                 if let r = parseRank(from: chunk) { return r }
             }
         }
@@ -27,11 +30,31 @@ enum CardTextParser: Sendable {
     static func firstSuit(in sources: [String]) -> Suit? {
         for raw in sources {
             for chunk in ocrChunks(from: raw) {
-                guard chunk.isEmpty == false, isPlausibleOCRSnippet(chunk) else { continue }
+                guard chunk.isEmpty == false,
+                      isPlausibleOCRSnippet(chunk),
+                      isSlotMachineChromeText(chunk) == false
+                else { continue }
                 if let s = parseSuit(from: chunk) { return s }
             }
         }
         return nil
+    }
+
+    /// WIN / BET / CREDIT labels under the reel are not card indices — ignore them for rank/suit pooling.
+    static func isSlotMachineChromeText(_ raw: String) -> Bool {
+        let upper = raw.folding(options: .diacriticInsensitive, locale: .current).uppercased()
+        guard upper.count >= 3 else { return false }
+        let chrome = [
+            "WIN", "CREDIT", "REDIT", "DEBIT", "BET", "BALANCE", "CASHOUT", "CASH OUT",
+            "COIN", "PAID", "PAYLINE", "HOLD", "DEAL", "DRAW",
+        ]
+        for word in chrome {
+            if upper.contains(word) { return true }
+        }
+        if upper.range(of: #"\bBET\s*\d"#, options: .regularExpression) != nil { return true }
+        if upper.range(of: #"\bCREDIT\s*\d"#, options: .regularExpression) != nil { return true }
+        if upper.range(of: #"\bWIN\s*\d"#, options: .regularExpression) != nil { return true }
+        return false
     }
 
     /// True when the string is mostly Latin / digits / card symbols ( Vision sometimes emits Cyrillic noise in pips).
@@ -146,8 +169,17 @@ enum CardTextParser: Sendable {
     )
 
     private static func normalizeOCRDigitArtifacts(_ s: String) -> String {
-        /// Vision often splits ten into two glyphs (**`1 0`**) or mirrored order (**`0 1`**).
         var result = s
+        /// Slot reels often misread **9** as **O1** / **01** in the top-left index.
+        if let o1 = try? NSRegularExpression(pattern: #"(?i)\bO\s*1\b"#, options: []) {
+            let r = NSRange(location: 0, length: (result as NSString).length)
+            result = o1.stringByReplacingMatches(in: result, options: [], range: r, withTemplate: "9")
+        }
+        if let ol = try? NSRegularExpression(pattern: #"(?i)\bO\s*l\b"#, options: []) {
+            let r = NSRange(location: 0, length: (result as NSString).length)
+            result = ol.stringByReplacingMatches(in: result, options: [], range: r, withTemplate: "9")
+        }
+        /// Vision often splits ten into two glyphs (**`1 0`**) or mirrored order (**`0 1`**).
         if let re = splitDigitTenRegexp {
             let r = NSRange(location: 0, length: (result as NSString).length)
             result = re.stringByReplacingMatches(in: result, options: [], range: r, withTemplate: "10")
