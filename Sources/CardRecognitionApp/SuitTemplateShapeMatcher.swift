@@ -66,6 +66,56 @@ enum SuitTemplateShapeMatcher: Sendable {
         inferMatching(for: image, allowed: nil, cosineAccept: 0.32, marginMin: 0.04)
     }
 
+    /// Strict tiers only — no relative pick when scores tie (avoids random ♥/♦ on 0.340 vs 0.340).
+    static func inferRedSuitsStrict(for image: CGImage) -> Suit? {
+        let tiers: [(Float, Float)] = [
+            (0.34, 0.048),
+            (0.26, 0.034),
+            (0.20, 0.024),
+        ]
+        for (cos, margin) in tiers {
+            if let s = inferMatching(
+                for: image,
+                allowed: Set([.hearts, .diamonds]),
+                cosineAccept: cos,
+                marginMin: margin
+            ) {
+                return s
+            }
+        }
+        return nil
+    }
+
+    static func inferBlackSuitsStrict(for image: CGImage) -> Suit? {
+        let tiers: [(Float, Float)] = [
+            (0.36, 0.050),
+            (0.28, 0.036),
+            (0.22, 0.026),
+        ]
+        for (cos, margin) in tiers {
+            if let s = inferMatching(
+                for: image,
+                allowed: Set([.spades, .clubs]),
+                cosineAccept: cos,
+                marginMin: margin
+            ) {
+                return s
+            }
+        }
+        return nil
+    }
+
+    /// The bitmap **is** the small index suit glyph (not center-court sampling).
+    static func inferFromIconCrop(_ crop: CGImage, allowed: Set<Suit>?) -> Suit? {
+        inferMatchingOnFullFrame(
+            crop,
+            allowed: allowed,
+            cosineAccept: 0.20,
+            marginMin: 0.028,
+            logLabel: "index_glyph_icon"
+        )
+    }
+
     // MARK: - Core matching
 
     private struct CourtFeatures {
@@ -310,6 +360,59 @@ enum SuitTemplateShapeMatcher: Sendable {
         return nil
     }
 
+    private static func inferMatchingOnFullFrame(
+        _ image: CGImage,
+        allowed: Set<Suit>?,
+        cosineAccept: Float,
+        marginMin: Float,
+        logLabel: String
+    ) -> Suit? {
+        guard cachedFill != nil || buildTemplateCaches(),
+              let fillT = cachedFill,
+              let edgeT = cachedEdge,
+              let resized = image.resizedToSquare(side: grid),
+              let fillRaw = rasterInkRaw(resized),
+              fillRaw.reduce(0, +) > 2.0,
+              let fillNorm = l2Normalize(fillRaw),
+              let edgeNorm = normalizedSobelMagnitude(fillRaw, side: grid) else { return nil }
+
+        let suitsScore: [Suit]
+        if let allowed, allowed.isEmpty == false {
+            suitsScore = allowed.sorted { $0.rawValue < $1.rawValue }
+        } else {
+            suitsScore = Suit.allCases.sorted { $0.rawValue < $1.rawValue }
+        }
+
+        var bestSuit: Suit?
+        var bestScore = Float(-999)
+        var second = Float(-999)
+
+        for suit in suitsScore {
+            guard let fT = fillT[suit], let eT = edgeT[suit],
+                  fT.count == fillNorm.count, eT.count == edgeNorm.count else { continue }
+            let score = wFill * dot(fillNorm, fT) + wEdge * dot(edgeNorm, eT)
+            if score > bestScore {
+                second = bestScore
+                bestScore = score
+                bestSuit = suit
+            } else if score > second {
+                second = score
+            }
+        }
+
+        guard let pick = bestSuit, bestScore >= cosineAccept else { return nil }
+        guard second < 0 || bestScore - second >= marginMin else {
+            SlotRecognitionDiagnostics.log(
+                "  \(logLabel): ambiguous (best=\(String(format: "%.3f", bestScore)) runner-up=\(String(format: "%.3f", second))) → none"
+            )
+            return nil
+        }
+        SlotRecognitionDiagnostics.log(
+            "  \(logLabel): matched \(pick.rawValue) score=\(String(format: "%.3f", bestScore)) margin=\(String(format: "%.3f", bestScore - max(second, 0)))"
+        )
+        return pick
+    }
+
     private static func inferMatching(
         for image: CGImage,
         allowed: Set<Suit>?,
@@ -377,10 +480,12 @@ enum SuitTemplateShapeMatcher: Sendable {
            let stemR = spadeStemConeRatio(fillRaw: fillRawStd, side: grid) {
             let sSpade = maxSuitCombo(for: image, suit: .spades, fillT: fillT, edgeT: edgeT)
             let sClub = maxSuitCombo(for: image, suit: .clubs, fillT: fillT, edgeT: edgeT)
-            guard sClub >= sSpade, sClub - sSpade < 0.058 else { return pick }
+            /// Trust a clear ♣ lead — stem heuristic often flips multi-pip ♠ art (e.g. 4♠) to ♣.
+            if sClub >= sSpade + 0.012 { return pick }
+            guard sClub >= sSpade, sClub - sSpade < 0.028 else { return pick }
             let weakT = max(sSpade, sClub) < 0.22
             let centerShare = upperCenterMassShareTopHalf(fillRawStd, side: grid)
-            let stemCut: Float = weakT ? 0.402 : 0.454
+            let stemCut: Float = weakT ? 0.468 : 0.512
             guard stemR >= stemCut else { return pick }
             if weakT, centerShare < 0.375 { return pick }
             SlotRecognitionDiagnostics.log(

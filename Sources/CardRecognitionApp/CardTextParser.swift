@@ -26,6 +26,11 @@ enum CardTextParser: Sendable {
         return nil
     }
 
+    /// Index corner first, then body/mirror — avoids `leftBand`/`pip` digits stealing rank on neighbor bleed.
+    static func firstRank(cornerSources: [String], then otherSources: [String]) -> Rank? {
+        firstRank(in: cornerSources) ?? firstRank(in: otherSources)
+    }
+
     /// Suit symbols and bounded SHDC letters only — never scan every character (avoids `"the"` → hearts via `h`).
     static func firstSuit(in sources: [String]) -> Suit? {
         for raw in sources {
@@ -38,6 +43,34 @@ enum CardTextParser: Sendable {
             }
         }
         return nil
+    }
+
+    /// Ignores rank-only OCR noise (`"4"`, `"2"`, `"J"`) so templates are not fed false “suit” evidence.
+    static func firstSuitExplicit(in sources: [String]) -> Suit? {
+        for raw in sources {
+            for chunk in ocrChunks(from: raw) {
+                guard chunk.isEmpty == false,
+                      isPlausibleOCRSnippet(chunk),
+                      isSlotMachineChromeText(chunk) == false,
+                      hasExplicitSuitSignal(chunk)
+                else { continue }
+                if let s = parseSuit(from: chunk) { return s }
+            }
+        }
+        return nil
+    }
+
+    private static func hasExplicitSuitSignal(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return false }
+        for ch in trimmed {
+            if Suit.from(character: ch) != nil { return true }
+        }
+        if parseSuit(from: trimmed) != nil { return true }
+        if gluedRankSuitLetter(trimmed) != nil || trailingRankSuitLetter(trimmed) != nil { return true }
+        if trimmed.count <= 2, parseRank(from: trimmed) != nil, parseSuit(from: trimmed) == nil { return false }
+        if trimmed.count <= 3, trimmed.allSatisfy(\.isNumber) { return false }
+        return false
     }
 
     /// WIN / BET / CREDIT labels under the reel are not card indices — ignore them for rank/suit pooling.
@@ -100,14 +133,41 @@ enum CardTextParser: Sendable {
             }
         }
 
+        if let glued = gluedRankSuitLetter(folds) { return glued }
+        if let trailing = trailingRankSuitLetter(folds) { return trailing }
+
         guard let regex = suitLetterRegexp else { return nil }
         let ns = folds as NSString
         let range = NSRange(location: 0, length: ns.length)
         guard let match = regex.firstMatch(in: folds, options: [], range: range), match.numberOfRanges >= 2 else {
             return nil
         }
-        let letter = ns.substring(with: match.range(at: 1)).lowercased()
-        switch letter {
+        return suitFromLetter(ns.substring(with: match.range(at: 1)))
+    }
+
+    /// OCR often glues rank + suit letter (`2d`, `Jh`, `9c`) with no separator.
+    private static func gluedRankSuitLetter(_ folds: String) -> Suit? {
+        guard let regex = gluedRankSuitRegexp else { return nil }
+        let ns = folds as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        guard let match = regex.firstMatch(in: folds, options: [], range: range), match.numberOfRanges >= 3 else {
+            return nil
+        }
+        return suitFromLetter(ns.substring(with: match.range(at: 2)))
+    }
+
+    private static func trailingRankSuitLetter(_ folds: String) -> Suit? {
+        let trimmed = folds.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2, let last = trimmed.last else { return nil }
+        let letter = String(last)
+        guard let suit = suitFromLetter(letter) else { return nil }
+        let head = String(trimmed.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard head.isEmpty == false, parseRank(from: head) != nil else { return nil }
+        return suit
+    }
+
+    private static func suitFromLetter(_ letter: String) -> Suit? {
+        switch letter.lowercased() {
         case "s": return .spades
         case "h": return .hearts
         case "d": return .diamonds
@@ -118,6 +178,11 @@ enum CardTextParser: Sendable {
 
     private static let suitLetterRegexp = try? NSRegularExpression(
         pattern: #"(?:^|[\s\|,])([shdc])(?:$|[\s\|,])"#,
+        options: [.caseInsensitive]
+    )
+
+    private static let gluedRankSuitRegexp = try? NSRegularExpression(
+        pattern: #"(?:^|[^A-Za-z0-9])(10|[2-9]|A|K|Q|J)([shdc])(?:$|[^A-Za-z0-9])"#,
         options: [.caseInsensitive]
     )
 
@@ -146,8 +211,6 @@ enum CardTextParser: Sendable {
     private static let ocrTenTokenRegexes: [NSRegularExpression] = {
         /// Glue forms like **LOof** (no `\b` between **O** and **o**) are common mirror-OCR reads of **10**.
         let patterns = [
-            #"(?i)LOof"#,
-            #"(?i)L0of"#,
             #"(?i)\bLO\b"#,
             #"(?i)\bL0\b"#,
             #"(?i)\bIO\b"#,
@@ -178,6 +241,13 @@ enum CardTextParser: Sendable {
         if let ol = try? NSRegularExpression(pattern: #"(?i)\bO\s*l\b"#, options: []) {
             let r = NSRange(location: 0, length: (result as NSString).length)
             result = ol.stringByReplacingMatches(in: result, options: [], range: r, withTemplate: "9")
+        }
+        /// Mirror/corner misreads of **9** as **LOof** / **10of** (do not treat as ten).
+        if let nineGlue = try? NSRegularExpression(
+            pattern: #"(?i)LOof|L0of|10of|1Oof|1o\s*of"#, options: []
+        ) {
+            let r = NSRange(location: 0, length: (result as NSString).length)
+            result = nineGlue.stringByReplacingMatches(in: result, options: [], range: r, withTemplate: "9")
         }
         /// Vision often splits ten into two glyphs (**`1 0`**) or mirrored order (**`0 1`**).
         if let re = splitDigitTenRegexp {

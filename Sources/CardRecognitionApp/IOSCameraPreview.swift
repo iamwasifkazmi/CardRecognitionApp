@@ -22,6 +22,7 @@ struct IOSCameraPreview: UIViewRepresentable {
     private func syncPreviewLayer(uiView: PreviewView) {
         let previewLayer = uiView.previewLayer
         previewLayer.session = session
+        /// Must stay **aspect fill** — `CapturePreviewFraming` crops the analyzed frame to this same visible region (no top/bottom letterbox in Vision).
         previewLayer.videoGravity = .resizeAspectFill
 
         /// Prefer window-scene orientation (stable when lying flat vs `UIDevice.current.orientation`).

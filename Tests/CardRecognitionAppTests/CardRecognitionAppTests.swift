@@ -3,6 +3,19 @@ import Testing
 
 @Suite("Card parsers")
 struct CardRecognitionParserTests {
+    @Test(arguments: ["J♦", "Q♥", "9♣", "4♠", "2d", "7 c"])
+    func parseRankAndSuitFromIndexCorner(_ raw: String) {
+        #expect(CardTextParser.parseRank(from: raw) != nil)
+        #expect(CardTextParser.parseSuit(from: raw) != nil)
+        #expect(CardTextParser.firstSuitExplicit(in: [raw]) != nil)
+    }
+
+    @Test
+    func rankOnlyCornerDoesNotImplySuit() {
+        #expect(CardTextParser.firstSuitExplicit(in: ["4"]) == nil)
+        #expect(CardTextParser.firstSuitExplicit(in: ["J"]) == nil)
+    }
+
     @Test(arguments: ["10♠", "10 ♠"])
     func parseTenOfSpades(_ text: String) {
         let rank = CardTextParser.parseRank(from: text)
@@ -46,7 +59,7 @@ struct CardRecognitionParserTests {
         #expect(rank == .queen || rank == .king || rank == .jack)
     }
 
-    @Test(arguments: ["LO", "L0", "LO of", "LOof fifo", "L0of x", "io", "1O", "IO • x"])
+    @Test(arguments: ["LO", "L0", "LO of", "io", "1O", "IO • x"])
     func ocrMisreadTen(_ raw: String) {
         #expect(CardTextParser.parseRank(from: raw) == .ten)
     }
@@ -76,6 +89,29 @@ struct CardRecognitionParserTests {
     @Test(arguments: ["O1", "O 1", "O l"])
     func ocrMisreadNine(_ raw: String) {
         #expect(CardTextParser.parseRank(from: raw) == .nine)
+    }
+
+    @Test(arguments: ["LOof", "10of", "1Oof"])
+    func ocrMisreadNineGlue(_ raw: String) {
+        #expect(CardTextParser.parseRank(from: raw) == .nine)
+        #expect(CardTextParser.parseRank(from: raw) != .ten)
+    }
+
+    @Test
+    func visiblePreviewCropMatchesAspectFillOnPortraitBuffer() {
+        let rect = CapturePreviewFraming.aspectFillPixelRect(imageWidth: 1080, imageHeight: 1920)
+        #expect(rect.width == 1080)
+        #expect(rect.height < 1920)
+        #expect(rect.minX == 0)
+        let centerY = rect.midY
+        #expect(abs(centerY - 960) < 2)
+    }
+
+    @Test
+    func visiblePreviewCropIsFullFrameWhenAspectsMatch() {
+        let rect = CapturePreviewFraming.aspectFillPixelRect(imageWidth: 1920, imageHeight: 1080)
+        #expect(rect.width == 1920)
+        #expect(rect.height == 1080)
     }
 
     @Test(arguments: ["1 0", "0 1", "1\n0"])

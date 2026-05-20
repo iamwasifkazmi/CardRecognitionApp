@@ -166,11 +166,12 @@ final class IOSCameraService: @unchecked Sendable {
                         pixelBuffer: pb,
                         interfaceOrientation: interfaceOrientation
                     )
-                    guard let cg = FrameNormalizer.uprightCGImage(pixelBuffer: pb, orientation: exif) else {
+                    guard let upright = FrameNormalizer.uprightCGImage(pixelBuffer: pb, orientation: exif) else {
                         continuation.resume(returning: nil)
                         return
                     }
-                    continuation.resume(returning: FrozenFrame(cgImage: cg))
+                    let visible = CapturePreviewFraming.cropToVisiblePreview(upright)
+                    continuation.resume(returning: FrozenFrame(cgImage: visible))
                 }
             }
             if let frozen {

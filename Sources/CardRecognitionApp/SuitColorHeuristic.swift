@@ -103,6 +103,18 @@ enum SuitColorHeuristic: Sendable {
             (redShare >= darkShare * 0.45 || Float(center.brightCardRedInk) >= Float(center.darkNeutralInk) * 0.22)
     }
 
+    /// Center court is mostly black ink (♠ / ♣) — use before monochrome shape guessing.
+    static func courtShowsBlackPips(_ image: CGImage) -> Bool {
+        guard let center = summarizeCenterCourtInk(image: image) else { return false }
+        let n = Float(max(center.nonWhiteCandidates, 1))
+        let darkShare = Float(center.darkNeutralInk) / n
+        let redShare = Float(center.brightCardRedInk) / n
+        return center.darkNeutralInk >= 64 &&
+            darkShare >= 0.07 &&
+            redShare < 0.045 &&
+            Float(center.darkNeutralInk) > Float(center.brightCardRedInk) * 1.6
+    }
+
     /// Softer than `courtShowsRedPipPigment` — enough to run ♥/♦ **templates** on standard Bicycle reds that miss strict chroma gates.
     static func courtSuggestsRedPipsWeak(_ image: CGImage) -> Bool {
         guard let center = summarizeCenterCourtInk(image: image) else { return false }

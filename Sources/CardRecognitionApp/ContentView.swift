@@ -26,7 +26,7 @@ struct ContentView: View {
 
 /// Shared rectangular “monitor style” framing for camera / import previews.
 private enum ScanPreviewStyle {
-    static let aspectRatio: CGFloat = 16 / 9
+    static let aspectRatio: CGFloat = CapturePreviewFraming.aspectRatio
 }
 
 private struct SlotScannerDashboard: View {
@@ -102,7 +102,7 @@ private struct SlotScannerDashboard: View {
                             .padding(.top, 4)
                         Text(
                             """
-                            • Use a steady, well-lit view of the card row; reduce glare on shiny UI.\n• For best OCR, prefer a sharp screenshot over a motion-blurred photo.\n• You can revoke camera access anytime in Settings ▸ Privacy ▸ Camera.
+                            • Video poker / cabinet: include the five white cards on the blue strip; paytable above and buttons below are ok. Overlays (“HOLD”, “PLAY CREDITS”) may lower confidence on some slots.\n• Use a steady, well-lit view of the card row; reduce glare on shiny UI.\n• For best OCR, prefer a sharp screenshot over a motion-blurred photo.\n• You can revoke camera access anytime in Settings ▸ Privacy ▸ Camera.
                             """
                         )
                     }
@@ -198,15 +198,20 @@ private enum ScanTableColumns {
     static let confidence: CGFloat = 48
 }
 
-/// Five-slot summary table stretching to the usable width.
+/// Five-slot summary: **row order = physical left → right** (slot `1` is the leftmost card on the cabinet screen).
 private struct DetectedCardsTable: View {
     let snapshot: CardVisionPipeline.ScanResult
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Detected row")
+            Text("Detected hand")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
+
+            Text("Each table row is one card. Order is left → right on the machine (slot 1 = far left).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             let rowCards = Array(snapshot.cards.prefix(5))
             VStack(alignment: .leading, spacing: 0) {
@@ -239,7 +244,7 @@ private struct DetectedCardsTable: View {
 private extension DetectedCardsTable {
     var tableHeaderRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text("#")
+            Text("Slot")
                 .frame(width: ScanTableColumns.slot, alignment: .leading)
             Text("Rank")
                 .frame(width: ScanTableColumns.rank, alignment: .leading)
@@ -284,6 +289,7 @@ private extension DetectedCardsTable {
                 .font(.callout.monospacedDigit())
                 .frame(width: ScanTableColumns.slot, alignment: .leading)
                 .foregroundStyle(.secondary)
+                .accessibilityLabel("Card slot \(slot), left to right")
 
             Text(card.rankTableLabel)
                 .font(.body.monospaced().weight(.medium))

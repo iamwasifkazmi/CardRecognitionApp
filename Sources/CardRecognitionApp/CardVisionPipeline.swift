@@ -37,10 +37,6 @@ enum CardVisionPipeline: Sendable {
         )
         SlotRecognitionDiagnostics.log("Geometry picks(count=\(picks.count)): left→right slot order")
 
-        /// Minimal slot strips (e.g. 1222×314) are very wide; ♠/♣ templates on **Queen** are more reliable than on standard 2∶1 photos where court art dominates.
-        let canvasAspect = CGFloat(cgImage.width) / CGFloat(max(cgImage.height, 1))
-        let wideHorizontalStripLayout = canvasAspect >= 3.05
-
         let ciBase = CIImage(cgImage: cgImage)
 
         var results: [RecognizedPlayingCard] = []
@@ -76,169 +72,41 @@ enum CardVisionPipeline: Sendable {
             }
 
             SlotRecognitionDiagnostics.log("  crop pixels: \(cardImage.width)×\(cardImage.height)")
-            let rowSliceColumn: Bool
-            if case .column = pick { rowSliceColumn = true } else { rowSliceColumn = false }
-            let ocr = TextRecognition.extract(
+
+            let rowSlice: Bool
+            if case .column = pick { rowSlice = true } else { rowSlice = false }
+
+            let index = CardIndexReader.read(
                 cardCrop: cardImage,
                 slotIndex: idx + 1,
-                rowSliceColumn: rowSliceColumn
+                rowSliceColumn: rowSlice
             )
-            let mlBest = classifyWithCoreMLIfAvailable(cardImage)
-
-            let rowIndexSuit = rowSliceColumn
-                ? TextRecognition.cornerIndexSuitForRowSlice(cardCrop: cardImage, slotIndex: idx + 1)
-                : ""
-
-            /// Five-column reel crops: index corners + left band; full frame only when not a row slice (avoids BET/CREDIT).
-            let rankSources: [String] = rowSliceColumn
-                ? [
-                    ocr.topStripText,
-                    ocr.suitCornerText,
-                    ocr.leftBandText,
-                    ocr.bottomStripText,
-                    ocr.pipCentralText,
-                ]
-                : [ocr.topStripText, ocr.suitCornerText, ocr.bottomStripText, ocr.fullCardText, ocr.combinedText]
-
-            let rank = mlBest.flatMap { CardTextParser.parseRank(from: $0.identifier) }
-                ?? CardTextParser.firstRank(in: rankSources)
-
-            let narrowCrop = CGFloat(cardImage.width) / CGFloat(cardImage.height) < 0.52
-            let rankSevenCornerSuit = rank == .seven
-                ? TextRecognition.cornerIndexSuitForRankSeven(
-                    cardCrop: cardImage,
-                    narrowColumn: narrowCrop || rowSliceColumn,
-                    slotIndex: idx + 1
-                )
-                : ""
-            let faceCornerSuit = rank?.isCourtRank == true
-                ? TextRecognition.cornerIndexSuitForFaceRank(
-                    cardCrop: cardImage,
-                    narrowColumn: narrowCrop || rowSliceColumn,
-                    slotIndex: idx + 1
-                )
-                : ""
-
-            let suitSources: [String] = rowSliceColumn
-                ? [
-                    rowIndexSuit,
-                    rankSevenCornerSuit,
-                    faceCornerSuit,
-                    ocr.suitCornerText,
-                    ocr.topStripText,
-                    ocr.pipCentralText,
-                    ocr.bottomStripText,
-                    ocr.leftBandText,
-                ]
-                : [
-                    rankSevenCornerSuit,
-                    faceCornerSuit,
-                    ocr.topStripText,
-                    ocr.suitCornerText,
-                    ocr.bottomStripText,
-                    ocr.fullCardText,
-                    ocr.combinedText,
-                ]
-
-            var suit = mlBest.flatMap { CardTextParser.parseSuit(from: $0.identifier) }
-                ?? CardTextParser.firstSuit(in: suitSources)
-
-            var suitFromColor = false
-            var suitFromShape = false
-            let pigment = rank != nil && SuitColorHeuristic.courtShowsRedPipPigment(cardImage)
-            let weakRed = rank != nil && SuitColorHeuristic.courtSuggestsRedPipsWeak(cardImage)
-            let redHint = pigment || weakRed
-
-            /// **Rank 7**: only ML or explicit text (incl. `rank7_index_suit`). No silhouette guess if the glyph isn’t read.
-            let allowSilhouetteAndColorFallback = rank != .seven
-            /// **Black Queen** on portrait photo rows: court illustration often makes ♣ “win” over ♠; skip ♠/♣ template unless the image looks like a wide minimal strip (where OCR + templates still work for slot Q).
-            let allowBlackSilhouetteFallback: Bool = {
-                guard rank != .seven else { return false }
-                if rank == .queen, redHint == false, wideHorizontalStripLayout == false { return false }
-                return true
-            }()
-
-            if allowSilhouetteAndColorFallback {
-                if suit == nil, redHint {
-                    suit = SuitColorHeuristic.infer(for: cardImage)
-                    suitFromColor = suit != nil
-                }
-                if suit == nil, redHint {
-                    suit = SuitTemplateShapeMatcher.inferRedSuitsOnly(for: cardImage)
-                    suitFromShape = suit != nil
-                }
-                if suit == nil, rank != nil, redHint == false, allowBlackSilhouetteFallback {
-                    suit = SuitTemplateShapeMatcher.inferBlackSuitsOnly(for: cardImage)
-                    suitFromShape = suit != nil
-                }
-                /// Reel columns: chromatic pip color beats ♥/♦ silhouette when court art skews templates.
-                if rowSliceColumn, pigment, let chroma = SuitColorHeuristic.infer(for: cardImage) {
-                    if suit == nil {
-                        suit = chroma
-                        suitFromColor = true
-                        suitFromShape = false
-                    } else if suitFromShape, chroma != suit {
-                        suit = chroma
-                        suitFromColor = true
-                        suitFromShape = false
-                    }
-                }
-            } else if rank == .seven, suit == nil {
-                SlotRecognitionDiagnostics.log(
-                    "  suit: rank 7 — no suit in OCR/ML (see rank7_index_suit); leaving unknown (no template/color fallback)"
-                )
-            } else if rank == .queen, redHint == false, suit == nil, wideHorizontalStripLayout == false {
-                SlotRecognitionDiagnostics.log(
-                    "  suit: Queen — no black suit in OCR/ML (see face_index_suit); unknown on portrait layout (♠/♣ template skipped)"
-                )
-            }
+            let rank = index.rank
+            let suit = index.suit
 
             SlotRecognitionDiagnostics.log(
-                "  parse → rank=\(rank.map(\.rawValue) ?? "?") suit=\(suit.map(\.rawValue) ?? "?") ml=\(mlBest?.identifier ?? "–") suitFromColorHint=\(suitFromColor) suitFromTemplate=\(suitFromShape)"
+                """
+                  parse → rank=\(rank.map(\.rawValue) ?? "?") suit=\(suit.map(\.rawValue) ?? "?") \
+                suit_via=\(index.suitSource?.rawValue ?? "none")
+                """
             )
 
             let decodedAnything = rank != nil || suit != nil
-            var confidence: Float
-            if let mlBest {
-                confidence = mlBest.confidence
+            var confidence: Float = 0
+            if rank != nil, suit != nil {
+                switch index.suitSource {
+                case .ocr: confidence = 0.88
+                case .indexIcon: confidence = 0.80
+                case .centerIcon: confidence = 0.76
+                case nil: confidence = 0.65
+                }
             } else if decodedAnything {
-                confidence = ocr.averageConfidence
-            } else {
-                confidence = 0
-            }
-            if suitFromColor, suit != nil {
-                /// OCR was silent on pips; color only separates ♥/♦ — never claim “100%” like text OCR.
-                confidence = min(confidence, 0.62)
-            } else if suitFromShape, suit != nil {
-                confidence = min(confidence, 0.70)
-            } else if rank != nil, suit == nil {
-                /// Rank OCR may stay high while ♠♣ silhouette match failed.
-                confidence = min(confidence, 0.78)
+                confidence = 0.50
             }
 
-            let diagnosisLines: [String] = [
-                ocr.topStripText.isEmpty ? nil : "OCR corner ▸ \(ocr.topStripText)",
-                ocr.suitCornerText.isEmpty ? nil : "OCR suit ▸ \(ocr.suitCornerText)",
-                ocr.bottomStripText.isEmpty ? nil : "OCR mirror ▸ \(ocr.bottomStripText)",
-                ocr.fullCardText.isEmpty ? nil : "OCR full ▸ \(ocr.fullCardText)",
-                mlBest.map { "ML ▸ \($0.identifier) (\(String(format: "%.02f", $0.confidence)))" },
-            ].compactMap(\.self)
-            var diagnosis = diagnosisLines.joined(separator: "\n")
-            if suitFromColor, suit != nil {
-                let note = "Suit ▸ pip color (hue on court ROI)"
-                diagnosis = diagnosis.isEmpty ? note : "\(diagnosis)\n\(note)"
-            }
-            if suitFromShape, suit != nil {
-                let note = "Suit ▸ silhouette vs SF Symbol template"
-                diagnosis = diagnosis.isEmpty ? note : "\(diagnosis)\n\(note)"
-            }
-            if rank == .seven, suit == nil {
-                let note = "Suit ▸ unknown — rank 7 index glyph not read (guessing disabled)"
-                diagnosis = diagnosis.isEmpty ? note : "\(diagnosis)\n\(note)"
-            }
-            if rank == .queen, suit == nil, redHint == false, wideHorizontalStripLayout == false {
-                let note = "Suit ▸ unknown — Queen index suit not read (♠/♣ guess off on this layout)"
-                diagnosis = diagnosis.isEmpty ? note : "\(diagnosis)\n\(note)"
+            var diagnosis = "Detected ▸ \(index.cornerText)"
+            if let src = index.suitSource, src != .ocr, suit != nil {
+                diagnosis += "\nSuit icon ▸ \(src.rawValue)"
             }
 
             results.append(
@@ -250,9 +118,7 @@ enum CardVisionPipeline: Sendable {
                 )
             )
             if decodedAnything == false {
-                SlotRecognitionDiagnostics.log(
-                    "  ⚠️ no rank/suit after OCR — check OCR lines above (empty ROIs vs parser filter vs black suit)."
-                )
+                SlotRecognitionDiagnostics.log("  ⚠️ rank/suit not read from index corner")
             }
         }
 
@@ -306,6 +172,7 @@ enum CardVisionPipeline: Sendable {
         }
         return observations.first
     }
+
 }
 
 // MARK: - Geometry selection
@@ -343,7 +210,20 @@ private enum CardRectangleSelector {
 
         SlotRecognitionDiagnostics.log("NMS+sort: \(kept.count) kept (left→right)")
 
+        let portraitPhoto = canvasAR < 0.95
+
+        /// Full-machine **portrait** photos: Vision often returns dozens of paytable / chrome boxes. The five **leftmost**
+        /// filtered rects are usually not the five cards — fall back to the normalized “card row” strip.
         if kept.count >= 5 {
+            let unionKept = clip(boundingUnion(of: kept))
+            if portraitPhoto, portraitRectClusterUnlikelyCardRow(unionKept) {
+                SlotRecognitionDiagnostics.log(
+                    "strategy=portrait_many_rects_reject_wide_union → synthetic five-column strip (not leftmost five boxes)"
+                )
+                let synthetic = syntheticFallbackStrip(canvasAspect: canvasAR)
+                logCardRowBandIfTrimmed(original: synthetic)
+                return fiveColumns(in: cardRowBand(in: synthetic))
+            }
             SlotRecognitionDiagnostics.log("strategy=take_first5_perspective_rectangles")
             return Array(kept.prefix(5).map { .perspective($0) })
         }
@@ -377,6 +257,33 @@ private enum CardRectangleSelector {
             return [.perspective(kept[0])]
         }
 
+        if kept.count >= 4 {
+            let unionBox = clip(boundingUnion(of: kept))
+            if unionBox.width >= 0.52 {
+                /// Portrait: prefer an even 5-way split of the **row hull** so we always get five slots; avoid four perspective
+                /// crops + one empty column when the fourth box isn’t a card.
+                if portraitPhoto, portraitUnionLooksLikeCardRowBand(unionBox) {
+                    SlotRecognitionDiagnostics.log(
+                        "strategy=SPLIT_union_\(kept.count)_rects_portrait_card_row (stable five columns)"
+                    )
+                    logCardRowBandIfTrimmed(original: unionBox)
+                    return fiveColumns(in: cardRowBand(in: unionBox))
+                }
+                if portraitPhoto, portraitRectClusterUnlikelyCardRow(unionBox) {
+                    SlotRecognitionDiagnostics.log(
+                        "strategy=portrait_\(kept.count)_rects_loose_union → synthetic five-column strip"
+                    )
+                    let synthetic = syntheticFallbackStrip(canvasAspect: canvasAR)
+                    logCardRowBandIfTrimmed(original: synthetic)
+                    return fiveColumns(in: cardRowBand(in: synthetic))
+                }
+                SlotRecognitionDiagnostics.log(
+                    "strategy=take_\(kept.count)_perspective_rectangles (stable slots, skip union column split)"
+                )
+                return Array(kept.prefix(5).map { .perspective($0) })
+            }
+        }
+
         let unionBox = clip(boundingUnion(of: kept))
         /// Panorama hulls like two partial hits can dip just under 0.28 wide (see 0.235 logs).
         let rowLike = unionBox.width >= 0.195 && unionBox.height >= 0.05
@@ -404,10 +311,24 @@ private enum CardRectangleSelector {
         return rect
     }
 
-    /// Portrait phone photos of a horizontal reel: avoid a tall synthetic hull that swallows WIN/BET/CREDIT under the row.
+    /// Heuristic vertical band for the five cards on **portrait** full-screen VP/cabinet shots (Vision uses bottom-left origin).
+    private static func portraitUnionLooksLikeCardRowBand(_ union: CGRect) -> Bool {
+        let midY = union.midY
+        return midY >= 0.36 && midY <= 0.76 && union.height <= 0.52 && union.height >= 0.04
+    }
+
+    /// `true` when the hull is too tall or off-center — typical of paytable + buttons, not five cards alone.
+    private static func portraitRectClusterUnlikelyCardRow(_ union: CGRect) -> Bool {
+        if union.height > 0.50 { return true }
+        if union.midY > 0.82 || union.midY < 0.28 { return true }
+        if union.width < 0.40 { return true }
+        return false
+    }
+
+    /// Portrait phone photos of a horizontal reel: sit the strip on the **middle** blue band (between paytable and BET/WIN).
     private static func syntheticFallbackStrip(canvasAspect: CGFloat) -> CGRect {
         if canvasAspect < 0.95 {
-            return CGRect(x: 0.03, y: 0.33, width: 0.94, height: 0.28)
+            return CGRect(x: 0.025, y: 0.405, width: 0.95, height: 0.265)
         }
         if canvasAspect >= 2.35 {
             return CGRect(x: 0.02, y: 0.20, width: 0.96, height: 0.44)
