@@ -1,84 +1,52 @@
 #if os(iOS)
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreVideo
 import UIKit
 
 final class IOSCameraService: @unchecked Sendable {
-    /// `CGImage` is not `Sendable`; mirrors `ScannerViewModel`’s detached-analysis pattern.
-    private struct FrozenFrame: @unchecked Sendable {
-        let cgImage: CGImage
-    }
-
-    private final class OutputBridge: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
-        weak var owner: IOSCameraService?
-
-        func captureOutput(_ output: AVCaptureOutput,
-                           didOutput sampleBuffer: CMSampleBuffer,
-                           from connection: AVCaptureConnection) {
-            guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-            owner?.mailbox.deliver(pb)
-        }
-    }
 
     private(set) var authorizationDenied = false
 
     let captureSession = AVCaptureSession()
-    private let videoOutput = AVCaptureVideoDataOutput()
+    private let photoOutput = AVCapturePhotoOutput()
     private let sessionQueue = DispatchQueue(label: "cardrecognition.capture.session")
-    /// Must be separate from the session queue — using the same queue can prevent delivery of sample buffers reliably.
-    private let videoDataQueue = DispatchQueue(label: "cardrecognition.video.frames", qos: .userInitiated)
-    private let outputBridge = OutputBridge()
 
-    final class FrameMailbox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var latest: CVPixelBuffer?
+    /// Holds `AVCapturePhotoCaptureDelegate` alive for the duration of one shot.
+    private final class PhotoCaptureSink: NSObject, AVCapturePhotoCaptureDelegate, @unchecked Sendable {
+        let onFinish: @Sendable (AVCapturePhoto, Error?) -> Void
 
-        func deliver(_ pixelBuffer: CVPixelBuffer) {
-            lock.lock()
-            latest = pixelBuffer
-            lock.unlock()
+        init(onFinish: @escaping @Sendable (AVCapturePhoto, Error?) -> Void) {
+            self.onFinish = onFinish
         }
 
-        func withLatest<Result>(_ closure: (CVPixelBuffer?) -> Result) -> Result {
-            lock.lock()
-            defer { lock.unlock() }
-            return closure(latest)
-        }
-
-        /// Copies the newest buffer reference for analysis (caller must finish before next deliver).
-        func copyLatest() -> CVPixelBuffer? {
-            lock.lock()
-            defer { lock.unlock() }
-            return latest
+        func photoOutput(
+            _ output: AVCapturePhotoOutput,
+            didFinishProcessingPhoto photo: AVCapturePhoto,
+            error: Error?
+        ) {
+            onFinish(photo, error)
         }
     }
 
-    /// Live capture timing — lets autofocus settle, then freezes one upright frame for Vision (same stability as photo import).
-    private enum LiveCaptureTiming {
+    /// Single still capture: settle focus/exposure, take **one photo**, then run Vision on that image (not streaming video).
+    private enum StillCaptureTiming {
         static let warmupMaxNs: UInt64 = 3_500_000_000
         static let warmupPollNs: UInt64 = 50_000_000
-        /// Hold steady after orientation so preview matches analyzed pixels.
-        static let settleNs: UInt64 = 550_000_000
-        /// Extra polls so `mailbox` isn’t stuck on an earlier stale buffer right after reconnect/orientation.
-        static let freezePollAttempts = 12
-        static let freezePollSpacingNs: UInt64 = 45_000_000
+        /// User aligns the row in the on-screen guide; give AF/AE time before the shutter.
+        static let settleBeforeShutterNs: UInt64 = 650_000_000
     }
 
-    private let mailbox = FrameMailbox()
+    private var inflightPhotoSink: PhotoCaptureSink?
 
-    init() {
-        outputBridge.owner = self
-        videoOutput.alwaysDiscardsLateVideoFrames = true
-        videoOutput.videoSettings = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        ]
+    /// `CGImage` is not `Sendable`; wrapping satisfies Swift 6 `CheckedContinuation` when returning a still from the photo pipeline.
+    private struct SendableCGImageBox: @unchecked Sendable {
+        let cgImage: CGImage
     }
 
     func activate() async -> String? {
         authorizationDenied = false
 
 #if targetEnvironment(simulator)
-        /// No AVCapture hardware in Simulator — skip session setup without surfacing Simulator-specific UI copy.
         return nil
 #else
         let granted = await Self.requestAuthorization()
@@ -87,13 +55,11 @@ final class IOSCameraService: @unchecked Sendable {
             return "Camera access denied — enable Camera in Settings to capture the display."
         }
 
-        return await withCheckedContinuation { continuation in
-            sessionQueue.async {
+        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            sessionQueue.async { @Sendable in
                 let error = Self.configureLockedSession(
                     captureSession: self.captureSession,
-                    videoOutput: self.videoOutput,
-                    delegate: self.outputBridge,
-                    delegateQueue: self.videoDataQueue
+                    photoOutput: self.photoOutput
                 )
                 if error == nil {
                     self.captureSession.startRunning()
@@ -111,96 +77,118 @@ final class IOSCameraService: @unchecked Sendable {
         }
     }
 
-    func performScan(interfaceOrientation: UIInterfaceOrientation) async -> Result<CardVisionPipeline.ScanResult, Error> {
+    /// One full-resolution still (same crop as the 16:9 preview). Call Vision separately so the UI can show “photo” vs “read” phases.
+    func captureStillImage(interfaceOrientation: UIInterfaceOrientation) async -> Result<CGImage, Error> {
 #if targetEnvironment(simulator)
         await Task.yield()
         return .failure(CameraDiagnosticsError.simulatorNoCameraHardware)
 #else
         var waited: UInt64 = 0
-        while waited < LiveCaptureTiming.warmupMaxNs {
-            let hasFrame = await hasPixelBufferInMailbox()
-            if hasFrame { break }
-            try? await Task.sleep(nanoseconds: LiveCaptureTiming.warmupPollNs)
-            waited += LiveCaptureTiming.warmupPollNs
+        while waited < StillCaptureTiming.warmupMaxNs {
+            if captureSession.isRunning { break }
+            try? await Task.sleep(nanoseconds: StillCaptureTiming.warmupPollNs)
+            waited += StillCaptureTiming.warmupPollNs
+        }
+
+        guard captureSession.isRunning else {
+            return .failure(CameraDiagnosticsError.cameraWarmingUp)
         }
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            sessionQueue.async {
-                CaptureVideoOrientation.apply(
-                    to: self.videoOutput.connection(with: .video),
-                    interfaceOrientation: interfaceOrientation
-                )
+            sessionQueue.async { @Sendable in
+                if let conn = self.photoOutput.connection(with: .video) {
+                    CaptureVideoOrientation.apply(
+                        to: conn,
+                        interfaceOrientation: interfaceOrientation
+                    )
+                }
                 continuation.resume()
             }
         }
 
-        /// Let autofocus / exposure catch up and give the user time to hold the row in frame.
-        try? await Task.sleep(nanoseconds: LiveCaptureTiming.settleNs)
-
-        let frozen = await freezeFrameForAnalysis(interfaceOrientation: interfaceOrientation)
-        guard let frozen else {
-            return .failure(CameraDiagnosticsError.cameraWarmingUp)
-        }
-
-        do {
-            let snapshot = try await Task.detached(priority: .userInitiated) {
-                try CardVisionPipeline.analyze(cgImage: frozen.cgImage)
-            }.value
-            return .success(snapshot)
-        } catch {
-            return .failure(error)
-        }
+        try? await Task.sleep(nanoseconds: StillCaptureTiming.settleBeforeShutterNs)
+        return await captureOnePhoto(interfaceOrientation: interfaceOrientation)
 #endif
     }
 
-    /// Locks pixels into a `CGImage` on the video queue immediately (pool-safe), same path Vision uses for imports.
-    private func freezeFrameForAnalysis(interfaceOrientation: UIInterfaceOrientation) async -> FrozenFrame? {
-        for _ in 0 ..< LiveCaptureTiming.freezePollAttempts {
-            let frozen = await withCheckedContinuation { (continuation: CheckedContinuation<FrozenFrame?, Never>) in
-                videoDataQueue.async {
-                    guard let pb = self.mailbox.copyLatest() else {
-                        continuation.resume(returning: nil)
-                        return
-                    }
-                    let exif = CaptureVideoOrientation.exifForAnalysis(
-                        pixelBuffer: pb,
-                        interfaceOrientation: interfaceOrientation
-                    )
-                    guard let upright = FrameNormalizer.uprightCGImage(pixelBuffer: pb, orientation: exif) else {
-                        continuation.resume(returning: nil)
-                        return
-                    }
-                    let visible = CapturePreviewFraming.cropToVisiblePreview(upright)
-                    continuation.resume(returning: FrozenFrame(cgImage: visible))
+#if !targetEnvironment(simulator)
+    private func captureOnePhoto(interfaceOrientation: UIInterfaceOrientation) async -> Result<CGImage, Error> {
+        let boxed = await withCheckedContinuation { (continuation: CheckedContinuation<Result<SendableCGImageBox, Error>, Never>) in
+            let orientationCapture = interfaceOrientation
+            sessionQueue.async { @Sendable in
+                guard self.inflightPhotoSink == nil else {
+                    continuation.resume(returning: .failure(CameraDiagnosticsError.captureAlreadyInProgress))
+                    return
                 }
+
+                let settings = AVCapturePhotoSettings()
+                settings.flashMode = .off
+                /// Do **not** set `isHighResolutionPhotoEnabled` unless `photoOutput.highResolutionCaptureEnabled` is YES — otherwise AVFoundation raises `NSInvalidArgumentException` and the app exits.
+
+                let sink = PhotoCaptureSink { [weak self] photo, error in
+                    guard let self else {
+                        continuation.resume(returning: .failure(CameraDiagnosticsError.cameraWarmingUp))
+                        return
+                    }
+                    /// Finish on the session queue so the continuation is not crossed with `Task.detached` + non-`Sendable` photo types.
+                    self.sessionQueue.async { @Sendable in
+                        self.inflightPhotoSink = nil
+
+                        if let error {
+                            continuation.resume(returning: .failure(error))
+                            return
+                        }
+                        guard let cg = Self.makeStillCGImage(
+                            from: photo,
+                            interfaceOrientation: orientationCapture
+                        ) else {
+                            continuation.resume(returning: .failure(CameraDiagnosticsError.cameraWarmingUp))
+                            return
+                        }
+                        continuation.resume(returning: .success(SendableCGImageBox(cgImage: cg)))
+                    }
+                }
+                self.inflightPhotoSink = sink
+                self.photoOutput.capturePhoto(with: settings, delegate: sink)
             }
-            if let frozen {
-                return frozen
-            }
-            try? await Task.sleep(nanoseconds: LiveCaptureTiming.freezePollSpacingNs)
         }
-        return nil
+        switch boxed {
+        case .success(let box):
+            return .success(box.cgImage)
+        case .failure(let error):
+            return .failure(error)
+        }
     }
 
-    private func hasPixelBufferInMailbox() async -> Bool {
-        await withCheckedContinuation { continuation in
-            videoDataQueue.async {
-                let filled = self.mailbox.withLatest { $0 != nil }
-                continuation.resume(returning: filled)
+    /// Matches `freezeFrameForAnalysis`: upright orientation + same **aspect-fill** crop as the on-screen 16:9 preview.
+    private static func makeStillCGImage(
+        from photo: AVCapturePhoto,
+        interfaceOrientation: UIInterfaceOrientation
+    ) -> CGImage? {
+        if let pb = photo.pixelBuffer {
+            let exif = CaptureVideoOrientation.exifForAnalysis(
+                pixelBuffer: pb,
+                interfaceOrientation: interfaceOrientation
+            )
+            guard let upright = FrameNormalizer.uprightCGImage(pixelBuffer: pb, orientation: exif) else {
+                return nil
             }
+            return CapturePreviewFraming.cropToVisiblePreview(upright)
         }
+        guard let data = photo.fileDataRepresentation() else { return nil }
+        guard let decoded = try? BitmapImport.cgImageVisionReady(bytes: data) else { return nil }
+        return CapturePreviewFraming.cropToVisiblePreview(decoded)
     }
+#endif
 
     private static func configureLockedSession(
         captureSession: AVCaptureSession,
-        videoOutput: AVCaptureVideoDataOutput,
-        delegate: AVCaptureVideoDataOutputSampleBufferDelegate?,
-        delegateQueue: DispatchQueue
+        photoOutput: AVCapturePhotoOutput
     ) -> String? {
         captureSession.beginConfiguration()
         defer { captureSession.commitConfiguration() }
 
-        captureSession.sessionPreset = .hd1920x1080
+        captureSession.sessionPreset = .photo
 
         for input in captureSession.inputs {
             captureSession.removeInput(input)
@@ -218,18 +206,15 @@ final class IOSCameraService: @unchecked Sendable {
         }
         captureSession.addInput(input)
 
-        guard captureSession.canAddOutput(videoOutput) else {
-            return "Unable to attach a video analyzer output."
+        guard captureSession.canAddOutput(photoOutput) else {
+            return "Unable to attach photo output."
+        }
+        captureSession.addOutput(photoOutput)
+        if #available(iOS 15.0, *) {
+            photoOutput.maxPhotoQualityPrioritization = .quality
         }
 
-        captureSession.addOutput(videoOutput)
-        videoOutput.videoSettings = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        ]
-        videoOutput.alwaysDiscardsLateVideoFrames = true
-        videoOutput.setSampleBufferDelegate(delegate, queue: delegateQueue)
-
-        if let conn = videoOutput.connection(with: .video) {
+        if let conn = photoOutput.connection(with: .video) {
             conn.preferredVideoStabilizationMode = .off
             CaptureVideoOrientation.apply(to: conn, interfaceOrientation: .portrait)
         }
@@ -243,7 +228,7 @@ final class IOSCameraService: @unchecked Sendable {
         case .authorized:
             return true
         case .notDetermined:
-            return await withCheckedContinuation { continuation in
+            return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
                 AVCaptureDevice.requestAccess(for: .video) { allowed in
                     continuation.resume(returning: allowed)
                 }
@@ -256,12 +241,15 @@ final class IOSCameraService: @unchecked Sendable {
 
 enum CameraDiagnosticsError: LocalizedError {
     case cameraWarmingUp
+    case captureAlreadyInProgress
     case simulatorNoCameraHardware
 
     var errorDescription: String? {
         switch self {
         case .cameraWarmingUp:
-            return "Live preview hasn’t delivered a frame yet. Wait a moment and try again, or open Settings ▸ Privacy ▸ Camera and allow access for this app."
+            return "Could not capture a photo. Hold steady, ensure the card row is in the yellow frame, and try again."
+        case .captureAlreadyInProgress:
+            return "A photo capture is already in progress. Wait for it to finish."
         case .simulatorNoCameraHardware:
             return "Live camera capture isn’t available. Use Photo Library or Browse Files to choose an image."
         }

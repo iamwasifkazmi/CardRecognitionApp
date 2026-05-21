@@ -107,13 +107,52 @@ enum SuitTemplateShapeMatcher: Sendable {
 
     /// The bitmap **is** the small index suit glyph (not center-court sampling).
     static func inferFromIconCrop(_ crop: CGImage, allowed: Set<Suit>?) -> Suit? {
-        inferMatchingOnFullFrame(
+        guard let allowed, allowed.isEmpty == false else { return nil }
+        return inferMatchingOnFullFrame(
             crop,
             allowed: allowed,
-            cosineAccept: 0.20,
-            marginMin: 0.028,
+            cosineAccept: 0.236,
+            marginMin: 0.038,
             logLabel: "index_glyph_icon"
         )
+    }
+
+    /// Returns best template score even when margin is tight — caller applies looser gates for index glyphs.
+    static func bestIconCropMatch(
+        _ crop: CGImage,
+        allowed: Set<Suit>
+    ) -> (suit: Suit, score: Float, margin: Float)? {
+        guard allowed.isEmpty == false,
+              cachedFill != nil || buildTemplateCaches(),
+              let fillT = cachedFill,
+              let edgeT = cachedEdge,
+              let resized = crop.resizedToSquare(side: grid),
+              let fillRaw = rasterInkRaw(resized),
+              fillRaw.reduce(0, +) > 2.8,
+              let fillNorm = l2Normalize(fillRaw),
+              let edgeNorm = normalizedSobelMagnitude(fillRaw, side: grid)
+        else { return nil }
+
+        let suitsScore = allowed.sorted { $0.rawValue < $1.rawValue }
+        var bestSuit: Suit?
+        var bestScore = Float(-999)
+        var second = Float(-999)
+
+        for suit in suitsScore {
+            guard let fT = fillT[suit], let eT = edgeT[suit],
+                  fT.count == fillNorm.count, eT.count == edgeNorm.count else { continue }
+            let score = wFill * dot(fillNorm, fT) + wEdge * dot(edgeNorm, eT)
+            if score > bestScore {
+                second = bestScore
+                bestScore = score
+                bestSuit = suit
+            } else if score > second {
+                second = score
+            }
+        }
+        guard let pick = bestSuit, bestScore > 0 else { return nil }
+        let margin = bestScore - max(second, 0)
+        return (pick, bestScore, margin)
     }
 
     // MARK: - Core matching
@@ -236,13 +275,13 @@ enum SuitTemplateShapeMatcher: Sendable {
         }
 
         if abs(sSpade - sClub) < 0.018 {
-            let h = inferSpadeVsClubStemHeuristic(fillRaw: fillRawStd, side: grid)
+            let h = inferSpadeVsClubStemHeuristic(fillRaw: fillRawStd, side: grid) ?? .clubs
             SlotRecognitionDiagnostics.log(
-                "  suit template: relative ♠/♣ (tied scores) → stem heuristic → \(h.map(\.rawValue) ?? "?")"
+                "  suit template: relative ♠/♣ (tied scores) → stem heuristic → \(h.rawValue)"
             )
             return h
         }
-        var pick: Suit = sSpade >= sClub ? .spades : .clubs
+        var pick: Suit = sSpade > sClub + 0.028 ? .spades : (sClub > sSpade + 0.028 ? .clubs : .clubs)
         if pick == .spades, sSpade - sClub < 0.038,
            upperMassSuggestsClub(fillRawStd, side: grid),
            (spadeStemConeRatio(fillRaw: fillRawStd, side: grid) ?? 0) < 0.43 {
@@ -275,7 +314,7 @@ enum SuitTemplateShapeMatcher: Sendable {
         let h = maxSuitCombo(for: image, suit: .hearts, fillT: fillT, edgeT: edgeT)
         let d = maxSuitCombo(for: image, suit: .diamonds, fillT: fillT, edgeT: edgeT)
         guard h >= 0, d >= 0 else { return nil }
-        var pick: Suit = h >= d ? .hearts : .diamonds
+        var pick: Suit = h > d + 0.022 ? .hearts : (d > h + 0.022 ? .diamonds : .hearts)
         if abs(h - d) < 0.017 {
             let he = maxEdgeSuitDot(for: image, suit: .hearts, edgeT: edgeT)
             let de = maxEdgeSuitDot(for: image, suit: .diamonds, edgeT: edgeT)

@@ -15,6 +15,48 @@ enum TextRecognition: Sendable {
         var averageConfidence: Float
     }
 
+    /// **Google ML Kit** (via CocoaPods) on upscaled index + full column — best source for rank/suit when linked.
+    static func thirdPartySlotOCR(
+        cardCrop: CGImage,
+        slotIndex: Int? = nil,
+        rowSliceColumn: Bool = false
+    ) -> String {
+        guard OCREngine.thirdPartyAvailable else { return "" }
+        let row = usesRowSliceLayout(rowSliceColumn: rowSliceColumn, cardCrop: cardCrop)
+        /// Reel columns: index is top-left; **HOLD** / BET chrome sits in the lower ~40% — never OCR the full column.
+        let regions: [CGRect] = row
+            ? [
+                CGRect(x: 0.02, y: 0.02, width: 0.56, height: 0.38),
+                CGRect(x: 0.02, y: 0.08, width: 0.50, height: 0.32),
+                CGRect(x: 0.08, y: 0.14, width: 0.84, height: 0.42),
+            ]
+            : [
+                CGRect(x: 0.02, y: 0.02, width: 0.58, height: 0.42),
+                CGRect(x: 0.02, y: 0.16, width: 0.46, height: 0.24),
+                CGRect(x: 0.10, y: 0.30, width: 0.82, height: 0.55),
+            ]
+        var parts: [String] = []
+        for region in regions {
+            let pixel = topLeftPixelRect(region, image: cardCrop)
+            guard pixel.width >= 12, pixel.height >= 12,
+                  let cropped = cardCrop.cropping(to: pixel)
+            else { continue }
+            let factor = row ? 5 : 4
+            let scaled = cropped.upscaledForOCR(factor: factor) ?? cropped
+            let r = OCREngine.recognize(cgImage: scaled, options: .accurate)
+            if r.text.isEmpty == false {
+                parts.append(r.text)
+            }
+        }
+        let merged = CardTextParser.strippedSlotMachineChrome(from: parts.joined(separator: " "))
+        if let tag = slotIndex {
+            SlotRecognitionDiagnostics.logOCR(
+                "OCR[slot \(tag)] mlkit_slot='\(SlotRecognitionDiagnostics.ellipsis(merged, limit: 120))' backend=\(OCREngine.preferredBackend.rawValue)"
+            )
+        }
+        return merged
+    }
+
     /// Focused OCR on the **top-left index stack** for **rank 7** — the small suit glyph under “7” is often missed by default ROIs.
     static func cornerIndexSuitForRankSeven(
         cardCrop: CGImage,
@@ -35,7 +77,8 @@ enum TextRecognition: Sendable {
             cardCrop: cardCrop,
             rois: rois,
             slotIndex: slotIndex,
-            logKey: "rank7_index_suit"
+            logKey: "rank7_index_suit",
+            suitGlyphLexicon: true
         )
     }
 
@@ -61,15 +104,10 @@ enum TextRecognition: Sendable {
             cardCrop: cardCrop,
             rois: rois,
             slotIndex: slotIndex,
-            logKey: "face_index_suit"
+            logKey: "face_index_suit",
+            suitGlyphLexicon: true
         )
     }
-
-    private static let suitGlyphCustomWords = [
-        "♠", "♥", "♦", "♣", "♤", "♡", "♢", "♧",
-        "S", "H", "D", "C", "s", "h", "d", "c",
-        "spades", "hearts", "diamonds", "clubs",
-    ]
 
     private static func cornerIndexSuitPass(
         cardCrop: CGImage,
@@ -80,32 +118,17 @@ enum TextRecognition: Sendable {
         suitGlyphLexicon: Bool = false,
         rowSliceTuning: Bool = false
     ) -> String {
-        let scaled = cardCrop.upscaledForOCR(factor: upscale) ?? cardCrop
-        var requests: [VNRecognizeTextRequest] = []
-        requests.reserveCapacity(rois.count)
-        for roi in rois {
-            let r = VNRecognizeTextRequest()
-            r.recognitionLevel = .accurate
-            r.usesLanguageCorrection = false
-            r.applyEnglishCardOCRHints()
-            if suitGlyphLexicon {
-                r.customWords = suitGlyphCustomWords
-            }
-            if rowSliceTuning {
-                r.applyRowSliceOCRTuning(true)
-            }
-            r.regionOfInterest = roi
-            requests.append(r)
-        }
-        let handler = VNImageRequestHandler(cgImage: scaled, orientation: .up, options: [:])
-        try? handler.perform(requests)
-        let merged = requests.map { summarize($0.results).text }.filter { !$0.isEmpty }.joined(separator: " ")
-        if SlotRecognitionDiagnostics.isLoggingEnabled, let tag = slotIndex {
-            SlotRecognitionDiagnostics.log(
-                "OCR[slot \(tag)] \(logKey)='\(SlotRecognitionDiagnostics.ellipsis(merged, limit: 100))'"
-            )
-        }
-        return merged
+        var minHeight: Float = 0.02
+        if rowSliceTuning { minHeight = 0.018 }
+        return physicalCropOCR(
+            cardCrop: cardCrop,
+            regions: rois,
+            slotIndex: slotIndex,
+            logKey: logKey,
+            upscale: upscale,
+            suitGlyphLexicon: suitGlyphLexicon,
+            minimumTextHeight: minHeight
+        )
     }
 
     /// Reads indexing corners, a suit-pip strip, mirrored corner, and full-card pass.
@@ -158,9 +181,9 @@ enum TextRecognition: Sendable {
             regions: regions,
             slotIndex: slotIndex,
             logKey: "physical_suit",
-            upscale: 6,
+            upscale: row ? 7 : 8,
             suitGlyphLexicon: true,
-            minimumTextHeight: 0.008
+            minimumTextHeight: row ? 0.007 : 0.006
         )
     }
 
@@ -205,17 +228,20 @@ enum TextRecognition: Sendable {
         if usesRowSliceLayout(rowSliceColumn: rowSliceColumn, cardCrop: cardCrop) {
             return cornerIndexSuitForRowSlice(cardCrop: cardCrop, slotIndex: slotIndex)
         }
+        /// Top-left stack in **CGImage** coords (not Vision bottom-left ROIs).
         let rois: [CGRect] = [
-            CGRect(x: 0.01, y: 0.62, width: 0.44, height: 0.36),
-            CGRect(x: 0.01, y: 0.50, width: 0.40, height: 0.38),
-            CGRect(x: 0.02, y: 0.40, width: 0.34, height: 0.30),
+            CGRect(x: 0.02, y: 0.02, width: 0.48, height: 0.36),
+            CGRect(x: 0.02, y: 0.08, width: 0.44, height: 0.30),
+            CGRect(x: 0.03, y: 0.14, width: 0.38, height: 0.22),
         ]
         return cornerIndexSuitPass(
             cardCrop: cardCrop,
             rois: rois,
             slotIndex: slotIndex,
             logKey: "index_corner",
-            upscale: 3
+            upscale: 4,
+            suitGlyphLexicon: true,
+            rowSliceTuning: true
         )
     }
 
@@ -283,16 +309,19 @@ enum TextRecognition: Sendable {
         slotIndex: Int? = nil
     ) -> String {
         let rois: [CGRect] = [
-            CGRect(x: 0.01, y: 0.70, width: 0.44, height: 0.28),
-            CGRect(x: 0.01, y: 0.58, width: 0.40, height: 0.38),
-            CGRect(x: 0.02, y: 0.48, width: 0.36, height: 0.44),
+            CGRect(x: 0.02, y: 0.02, width: 0.50, height: 0.40),
+            CGRect(x: 0.02, y: 0.06, width: 0.48, height: 0.36),
+            CGRect(x: 0.02, y: 0.12, width: 0.44, height: 0.32),
+            CGRect(x: 0.03, y: 0.18, width: 0.40, height: 0.26),
         ]
         return cornerIndexSuitPass(
             cardCrop: cardCrop,
             rois: rois,
             slotIndex: slotIndex,
             logKey: "row_index_suit",
-            upscale: 3
+            upscale: 4,
+            suitGlyphLexicon: true,
+            rowSliceTuning: true
         )
     }
 
@@ -302,85 +331,40 @@ enum TextRecognition: Sendable {
         rowSliceColumn: Bool = false
     ) -> OCRSnapshot {
         let narrowColumn = normalizedCardCropWidth(cardCrop) < 0.52
+        let minHeight: Float = rowSliceColumn ? 0.018 : 0.02
 
-        let strip = VNRecognizeTextRequest()
-        strip.recognitionLevel = .accurate
-        strip.usesLanguageCorrection = false
-        strip.applyEnglishCardOCRHints()
-        strip.applyRowSliceOCRTuning(rowSliceColumn)
-        /// Vision origin is bottom-left; skinny reel columns need a wider/top-heavy ROI so the index isn’t clipped.
-        strip.regionOfInterest = rowSliceColumn
-            ? CGRect(x: 0.02, y: 0.68, width: 0.50, height: 0.30)
+        let topROI = rowSliceColumn
+            ? CGRect(x: 0.02, y: 0.02, width: 0.50, height: 0.30)
             : narrowColumn
-                ? CGRect(x: 0.02, y: 0.52, width: 0.90, height: 0.46)
-                : CGRect(x: 0.03, y: 0.62, width: 0.52, height: 0.37)
-
-        let suitStrip = VNRecognizeTextRequest()
-        suitStrip.recognitionLevel = .accurate
-        suitStrip.usesLanguageCorrection = false
-        suitStrip.applyEnglishCardOCRHints()
-        suitStrip.applyRowSliceOCRTuning(rowSliceColumn)
-        /// Pip + small suit glyph under the rank in the top-left stack.
-        suitStrip.regionOfInterest = rowSliceColumn
-            ? CGRect(x: 0.02, y: 0.52, width: 0.34, height: 0.34)
+                ? CGRect(x: 0.02, y: 0.02, width: 0.90, height: 0.46)
+                : CGRect(x: 0.03, y: 0.01, width: 0.52, height: 0.37)
+        let suitROI = rowSliceColumn
+            ? CGRect(x: 0.02, y: 0.14, width: 0.34, height: 0.34)
             : narrowColumn
-                ? CGRect(x: 0.02, y: 0.26, width: 0.55, height: 0.36)
-                : CGRect(x: 0.02, y: 0.48, width: 0.36, height: 0.38)
-
-        let bottomStrip = VNRecognizeTextRequest()
-        bottomStrip.recognitionLevel = .accurate
-        bottomStrip.usesLanguageCorrection = false
-        bottomStrip.applyEnglishCardOCRHints()
-        bottomStrip.applyRowSliceOCRTuning(rowSliceColumn)
-        /// Upside-down index on the bottom-right of the card (low y, high x in Vision coords).
-        bottomStrip.regionOfInterest = rowSliceColumn
-            ? CGRect(x: 0.38, y: 0.02, width: 0.60, height: 0.38)
+                ? CGRect(x: 0.02, y: 0.38, width: 0.55, height: 0.36)
+                : CGRect(x: 0.02, y: 0.14, width: 0.36, height: 0.38)
+        let bottomROI = rowSliceColumn
+            ? CGRect(x: 0.38, y: 0.60, width: 0.60, height: 0.38)
             : narrowColumn
-                ? CGRect(x: 0.22, y: 0.02, width: 0.76, height: 0.50)
-                : CGRect(x: 0.40, y: 0.02, width: 0.58, height: 0.44)
-
-        let full = VNRecognizeTextRequest()
-        full.recognitionLevel = .accurate
-        full.usesLanguageCorrection = false
-        full.applyEnglishCardOCRHints()
-        full.applyRowSliceOCRTuning(rowSliceColumn)
-        full.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 1)
-
-        /// Full-height left edge: on thin column crops the index stack sometimes sits between fixed corner ROIs.
-        let leftBand = VNRecognizeTextRequest()
-        leftBand.recognitionLevel = .accurate
-        leftBand.usesLanguageCorrection = false
-        leftBand.applyEnglishCardOCRHints()
-        leftBand.applyRowSliceOCRTuning(rowSliceColumn)
-        leftBand.regionOfInterest = rowSliceColumn
-            ? CGRect(x: 0.02, y: 0.50, width: 0.46, height: 0.48)
+                ? CGRect(x: 0.22, y: 0.48, width: 0.76, height: 0.50)
+                : CGRect(x: 0.40, y: 0.54, width: 0.58, height: 0.44)
+        let pipROI = rowSliceColumn
+            ? CGRect(x: 0.12, y: 0.14, width: 0.78, height: 0.48)
+            : CGRect(x: 0.14, y: 0.28, width: 0.74, height: 0.52)
+        let leftROI = rowSliceColumn
+            ? CGRect(x: 0.02, y: 0.02, width: 0.46, height: 0.48)
             : narrowColumn
-                ? CGRect(x: 0.02, y: 0.06, width: 0.52, height: 0.92)
-                : CGRect(x: 0.02, y: 0.12, width: 0.44, height: 0.82)
+                ? CGRect(x: 0.02, y: 0.02, width: 0.52, height: 0.92)
+                : CGRect(x: 0.02, y: 0.06, width: 0.44, height: 0.82)
 
-        /// Large ♠ ♥ ♦ ♣ pips typically sit mid-card — corner strips often miss black suits entirely.
-        let pipField = VNRecognizeTextRequest()
-        pipField.recognitionLevel = .accurate
-        pipField.usesLanguageCorrection = false
-        pipField.applyEnglishCardOCRHints()
-        pipField.applyRowSliceOCRTuning(rowSliceColumn)
-        pipField.regionOfInterest = rowSliceColumn
-            ? CGRect(x: 0.12, y: 0.38, width: 0.78, height: 0.48)
-            : CGRect(x: 0.14, y: 0.20, width: 0.74, height: 0.52)
-
-        var requests: [VNRecognizeTextRequest] = [strip, suitStrip, bottomStrip, pipField, leftBand]
-        if rowSliceColumn == false {
-            requests.append(full)
-        }
-        let handler = VNImageRequestHandler(cgImage: cardCrop, orientation: .up, options: [:])
-        try? handler.perform(requests)
-
-        let top = summarize(strip.results)
-        let suitC = summarize(suitStrip.results)
-        let bottom = summarize(bottomStrip.results)
-        let pipCentral = summarize(pipField.results)
-        var whole: (text: String, avg: Float) = rowSliceColumn ? ("", 0) : summarize(full.results)
-        let leftText = summarize(leftBand.results)
+        let top = ocrTopLeftRegion(cardCrop, topROI, minHeight: minHeight)
+        let suitC = ocrTopLeftRegion(cardCrop, suitROI, minHeight: minHeight, suitGlyphs: true)
+        let bottom = ocrTopLeftRegion(cardCrop, bottomROI, minHeight: minHeight)
+        let pipCentral = ocrTopLeftRegion(cardCrop, pipROI, minHeight: minHeight)
+        let leftText = ocrTopLeftRegion(cardCrop, leftROI, minHeight: minHeight)
+        var whole: (text: String, avg: Float) = rowSliceColumn
+            ? ("", 0)
+            : ocrTopLeftRegion(cardCrop, CGRect(x: 0, y: 0, width: 1, height: 1), minHeight: minHeight)
 
         var combined = [top.text, suitC.text, bottom.text, pipCentral.text, whole.text, leftText.text]
             .filter { !$0.isEmpty }
@@ -421,14 +405,14 @@ enum TextRecognition: Sendable {
                 confs = [rescueFast.avg]
                 averageConfidence = rescueFast.avg
             } else {
-                let rescueAccurate = fullFramePass(cgImage: cardCrop, recognitionLevel: .accurate)
+                let rescueAccurate = fullFramePass(cgImage: cardCrop, accurate: true)
                 if rescueAccurate.text.isEmpty == false {
                     combined = rescueAccurate.text
                     whole = rescueAccurate
                     confs = [rescueAccurate.avg]
                     averageConfidence = rescueAccurate.avg
                 } else if let scaled = cardCrop.upscaledForOCR(factor: 2) {
-                    let rescueScaled = fullFramePass(cgImage: scaled, recognitionLevel: .accurate)
+                    let rescueScaled = fullFramePass(cgImage: scaled, accurate: true)
                     if rescueScaled.text.isEmpty == false {
                         combined = rescueScaled.text
                         whole = rescueScaled
@@ -439,10 +423,11 @@ enum TextRecognition: Sendable {
             }
         }
 
-        if SlotRecognitionDiagnostics.isLoggingEnabled, let tag = slotIndex {
-            SlotRecognitionDiagnostics.log(
+        if let tag = slotIndex {
+            SlotRecognitionDiagnostics.logOCR(
                 """
-                OCR[slot \(tag)] skinnyColumn=\(narrowColumn) \(cardCrop.width)×\(cardCrop.height) px | \
+                OCR[slot \(tag)] backend=\(OCREngine.preferredBackend.rawValue) skinnyColumn=\(narrowColumn) \
+                \(cardCrop.width)×\(cardCrop.height) px | \
                 corner='\(SlotRecognitionDiagnostics.ellipsis(top.text, limit: 60))' | \
                 suitROI='\(SlotRecognitionDiagnostics.ellipsis(suitC.text, limit: 60))' | \
                 mirror='\(SlotRecognitionDiagnostics.ellipsis(bottom.text, limit: 60))' | \
@@ -469,21 +454,33 @@ enum TextRecognition: Sendable {
 
     /// When corner ROIs yield nothing on a skinny column crop, `.fast` on the whole card sometimes still finds the index glyphs.
     private static func fallbackFullCardPass(cgImage: CGImage) -> (text: String, avg: Float) {
-        fullFramePass(cgImage: cgImage, recognitionLevel: .fast)
+        fullFramePass(cgImage: cgImage, accurate: false)
     }
 
-    private static func fullFramePass(
-        cgImage: CGImage,
-        recognitionLevel: VNRequestTextRecognitionLevel
+    private static func fullFramePass(cgImage: CGImage, accurate: Bool) -> (text: String, avg: Float) {
+        let options = accurate ? OCREngine.Options.accurate : OCREngine.Options.fast
+        let r = OCREngine.recognize(cgImage: cgImage, options: options)
+        return (r.text, r.averageConfidence)
+    }
+
+    private static func ocrTopLeftRegion(
+        _ cardCrop: CGImage,
+        _ region: CGRect,
+        minHeight: Float,
+        suitGlyphs: Bool = false
     ) -> (text: String, avg: Float) {
-        let req = VNRecognizeTextRequest()
-        req.recognitionLevel = recognitionLevel
-        req.usesLanguageCorrection = false
-        req.applyEnglishCardOCRHints()
-        req.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 1)
-        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
-        try? handler.perform([req])
-        return summarize(req.results)
+        let pixel = topLeftPixelRect(region, image: cardCrop)
+        guard pixel.width >= 8, pixel.height >= 8,
+              let cropped = cardCrop.cropping(to: pixel)
+        else { return ("", 0) }
+        let scaled = cropped.upscaledForOCR(factor: 2) ?? cropped
+        var options = OCREngine.Options(accurate: true, minimumTextHeight: minHeight, suitGlyphLexicon: suitGlyphs)
+        var r = OCREngine.recognize(cgImage: scaled, options: options)
+        if r.text.isEmpty {
+            options.accurate = false
+            r = OCREngine.recognize(cgImage: scaled, options: options)
+        }
+        return (r.text, r.averageConfidence)
     }
 
     private static func normalizedCardCropWidth(_ image: CGImage) -> CGFloat {
@@ -514,52 +511,27 @@ enum TextRecognition: Sendable {
                   let cropped = cardCrop.cropping(to: pixel)
             else { continue }
             let scaled = cropped.upscaledForOCR(factor: upscale) ?? cropped
-            let accurate = recognizeText(
-                on: scaled,
-                level: .accurate,
+            var options = OCREngine.Options(
+                accurate: true,
                 minimumTextHeight: minimumTextHeight,
                 suitGlyphLexicon: suitGlyphLexicon
             )
-            if accurate.isEmpty == false {
-                parts.append(accurate)
-                continue
+            var r = OCREngine.recognize(cgImage: scaled, options: options)
+            if r.text.isEmpty {
+                options.accurate = false
+                r = OCREngine.recognize(cgImage: scaled, options: options)
             }
-            let fast = recognizeText(
-                on: scaled,
-                level: .fast,
-                minimumTextHeight: minimumTextHeight * 0.85,
-                suitGlyphLexicon: suitGlyphLexicon
-            )
-            if fast.isEmpty == false {
-                parts.append(fast)
+            if r.text.isEmpty == false {
+                parts.append(r.text)
             }
         }
-        let merged = parts.joined(separator: " ")
-        if SlotRecognitionDiagnostics.isLoggingEnabled, let tag = slotIndex {
-            SlotRecognitionDiagnostics.log(
+        let merged = CardTextParser.strippedSlotMachineChrome(from: parts.joined(separator: " "))
+        if let tag = slotIndex {
+            SlotRecognitionDiagnostics.logOCR(
                 "OCR[slot \(tag)] \(logKey)='\(SlotRecognitionDiagnostics.ellipsis(merged, limit: 100))'"
             )
         }
         return merged
-    }
-
-    private static func recognizeText(
-        on image: CGImage,
-        level: VNRequestTextRecognitionLevel,
-        minimumTextHeight: Float,
-        suitGlyphLexicon: Bool
-    ) -> String {
-        let req = VNRecognizeTextRequest()
-        req.recognitionLevel = level
-        req.usesLanguageCorrection = false
-        req.applyEnglishCardOCRHints()
-        req.minimumTextHeight = minimumTextHeight
-        if suitGlyphLexicon {
-            req.customWords = suitGlyphCustomWords
-        }
-        let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
-        try? handler.perform([req])
-        return summarize(req.results).text
     }
 
     private static func topLeftPixelRect(_ normalized: CGRect, image: CGImage) -> CGRect {
@@ -590,29 +562,6 @@ enum TextRecognition: Sendable {
         return false
     }
 
-    private static func summarize(_ observations: [VNRecognizedTextObservation]?) -> (text: String, avg: Float) {
-        guard let observations, observations.isEmpty == false else {
-            return ("", 0)
-        }
-
-        var strings: [String] = []
-        strings.reserveCapacity(observations.count)
-        var confidences: [Float] = []
-        confidences.reserveCapacity(observations.count)
-
-        for obs in observations {
-            let candidates = obs.topCandidates(3)
-            guard candidates.isEmpty == false else { continue }
-            strings.append(candidates.map(\.string).joined(separator: " "))
-            let sliceAvg = candidates.reduce(Float(0)) { $0 + $1.confidence } / Float(candidates.count)
-            confidences.append(sliceAvg)
-        }
-
-        let text = strings.joined(separator: " ")
-        guard confidences.isEmpty == false else { return ("", 0) }
-        let avg = confidences.reduce(0, +) / Float(confidences.count)
-        return (text, avg)
-    }
 }
 
 private extension CGImage {
@@ -641,15 +590,3 @@ private extension CGImage {
     }
 }
 
-private extension VNRecognizeTextRequest {
-    /// Reduce accidental non-Latin “phantom text” when reading simple slot artwork.
-    func applyEnglishCardOCRHints() {
-        recognitionLanguages = ["en-US"]
-    }
-
-    /// Shallow reel columns: smaller glyphs benefit from a lower minimum text height.
-    func applyRowSliceOCRTuning(_ rowSliceColumn: Bool) {
-        guard rowSliceColumn else { return }
-        minimumTextHeight = 0.018
-    }
-}

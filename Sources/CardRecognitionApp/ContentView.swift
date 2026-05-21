@@ -29,6 +29,34 @@ private enum ScanPreviewStyle {
     static let aspectRatio: CGFloat = CapturePreviewFraming.aspectRatio
 }
 
+#if os(iOS)
+/// Rounded yellow frame — align the five-card row here; **Photo & read** saves one still, then runs OCR (no live video scan).
+private struct FiveCardRowFramingGuide: View {
+    var body: some View {
+        GeometryReader { geo in
+            let r = CapturePreviewFraming.fiveCardRowGuideRectNormalizedTL
+            let w = geo.size.width
+            let h = geo.size.height
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.yellow.opacity(0.92), lineWidth: 3)
+                    .frame(width: w * r.width, height: h * r.height)
+                    .position(x: w * r.midX, y: h * r.midY)
+                Text("Keep all 5 cards inside")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.9), radius: 2, x: 0, y: 1)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.black.opacity(0.42), in: Capsule())
+                    .position(x: w * 0.5, y: max(18, h * r.minY - 14))
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+#endif
+
 private struct SlotScannerDashboard: View {
     @Bindable var model: ScannerViewModel
 #if os(iOS)
@@ -40,14 +68,19 @@ private struct SlotScannerDashboard: View {
             VStack(alignment: .center, spacing: 14) {
                 Group {
 #if os(iOS) && !targetEnvironment(simulator)
-                    IOSCameraPreview(session: model.captureSessionForPreview)
-                        .scanPreviewChrome()
+                    ZStack {
+                        IOSCameraPreview(session: model.captureSessionForPreview)
+                        FiveCardRowFramingGuide()
+                    }
+                    .scanPreviewChrome()
 #elseif os(iOS) && targetEnvironment(simulator)
-                    /// Never attach `AVCaptureVideoPreviewLayer` on Simulator — it still pings FigCapture (-12782) even with no inputs.
-                    Rectangle()
-                        .fill(Color.black)
-                        .aspectRatio(ScanPreviewStyle.aspectRatio, contentMode: .fit)
-                        .scanPreviewChromeStrokeOnly()
+                    ZStack {
+                        Rectangle()
+                            .fill(Color.black)
+                            .aspectRatio(ScanPreviewStyle.aspectRatio, contentMode: .fit)
+                        FiveCardRowFramingGuide()
+                    }
+                    .scanPreviewChromeStrokeOnly()
 #else
                     Rectangle()
                         .fill(Color.secondary.opacity(0.12))
@@ -80,8 +113,14 @@ private struct SlotScannerDashboard: View {
                 }
 
                 if model.isAnalyzing {
-                    ProgressView(model.isAnalyzingLiveCapture ? "Hold steady — reading five cards…" : "Reading five-slot row…")
-                        .frame(maxWidth: .infinity)
+                    VStack(spacing: 8) {
+                        ProgressView()
+                        Text(model.cameraScanPhase ?? "Reading five-slot row…")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
 
                 if let snapshot = model.latestScan {
@@ -94,7 +133,7 @@ private struct SlotScannerDashboard: View {
                             .font(.subheadline.weight(.semibold))
                         Text(
                             """
-                            • Camera: Accessed only when you tap Capture & read. Images used for recognition are processed on your device; this app does not upload them to remote servers.\n• Photos & Files: You pick which images to open. They are read on your device for analysis only.
+                            • Camera: **Photo & read** takes one still image of the framed row (not live video), then reads cards on-device; nothing is uploaded.\n• Photos & Files: You pick which images to open. They are read on your device for analysis only.
                             """
                         )
                         Text("Scanning accuracy")
@@ -123,7 +162,7 @@ private struct SlotScannerDashboard: View {
                 Button {
                     Task { await model.analyzeLiveScene() }
                 } label: {
-                    Label("Capture & read", systemImage: "camera.viewfinder")
+                    Label("Photo & read", systemImage: "camera.fill")
                 }
                 .disabled(model.isAnalyzing)
 #endif

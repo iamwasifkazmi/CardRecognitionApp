@@ -1,11 +1,14 @@
 import CoreGraphics
 
-/// Rank from index OCR; suit from OCR glyph or **icon template** on the index/court pip (not guessed defaults).
+/// Rank from index OCR + staged fallbacks; suit from explicit OCR glyphs or icon template match — **never** hue-only guesses (`?` when unknown).
 enum CardIndexReader: Sendable {
     enum SuitSource: String, Sendable {
         case ocr
+        case indexShape
+        case centerShape
         case indexIcon
         case centerIcon
+        case pipColor
     }
 
     struct Reading: Sendable {
@@ -20,6 +23,12 @@ enum CardIndexReader: Sendable {
         slotIndex: Int? = nil,
         rowSliceColumn: Bool = false
     ) -> Reading {
+        let mlKitPool = TextRecognition.thirdPartySlotOCR(
+            cardCrop: cardCrop,
+            slotIndex: slotIndex,
+            rowSliceColumn: rowSliceColumn
+        )
+
         let physicalIndex = TextRecognition.physicalIndexCornerText(
             cardCrop: cardCrop,
             slotIndex: slotIndex,
@@ -55,16 +64,26 @@ enum CardIndexReader: Sendable {
             rowSliceColumn: rowSliceColumn
         )
 
-        let cornerRankSources = [
+        let dedicatedSuitOCR = dedicatedIndexSuitOCR(
+            cardCrop: cardCrop,
+            rowSliceColumn: rowSliceColumn,
+            slotIndex: slotIndex
+        )
+
+        /// Rank from index corner + ML Kit (never from center-pip digit pools on column slices).
+        let cornerRankOnlySources = [
             physicalIndex,
             physicalMirror,
             cornerROI,
             rankCorner,
             snap.topStripText,
-        ]
+        ].filter { !$0.isEmpty }
+
+        let cornerRankSources = [mlKitPool] + cornerRankOnlySources
+
         var rank = CardTextParser.firstRank(cornerSources: cornerRankSources, then: [])
 
-        if rank == nil, containsCourtLetterHint(cornerRankSources) {
+        if rank == nil, containsCourtLetterHint(cornerRankSources + [snap.fullCardText]) {
             let faceText = TextRecognition.cornerIndexSuitForFaceRank(
                 cardCrop: cardCrop,
                 narrowColumn: rowSliceColumn,
@@ -72,11 +91,23 @@ enum CardIndexReader: Sendable {
             )
             rank = CardTextParser.firstRank(cornerSources: [faceText, snap.topStripText], then: [])
         }
-        if rank == nil {
-            rank = CardTextParser.firstRank(cornerSources: [snap.leftBandText], then: [])
+        if rank == nil, rowSliceColumn == false {
+            rank = CardTextParser.firstRank(
+                cornerSources: [snap.fullCardText, snap.pipCentralText],
+                then: []
+            )
+        }
+        if rank == nil, rowSliceColumn == false {
+            rank = CardTextParser.firstRank(
+                cornerSources: [snap.leftBandText, snap.combinedText],
+                then: []
+            )
         }
 
+        let rankKnown = rank != nil
+
         var ocrSuitSources = [
+            dedicatedSuitOCR,
             physicalSuit,
             physicalIndex,
             physicalMirror,
@@ -85,6 +116,10 @@ enum CardIndexReader: Sendable {
             snap.suitCornerText,
             snap.topStripText,
         ]
+        ocrSuitSources.insert(mlKitPool, at: 0)
+        if rowSliceColumn == false {
+            ocrSuitSources.append(contentsOf: [snap.pipCentralText, snap.leftBandText])
+        }
         if let r = rank {
             let extra = rankSpecificSuitOCR(
                 cardCrop: cardCrop,
@@ -103,10 +138,25 @@ enum CardIndexReader: Sendable {
         if suit == nil, let icon = SuitIconDetector.detect(
             cardCrop: cardCrop,
             rowSliceColumn: rowSliceColumn,
-            slotIndex: slotIndex
+            slotIndex: slotIndex,
+            rankKnown: rankKnown
         ) {
             suit = icon.suit
-            suitSource = icon.method == .indexGlyph ? .indexIcon : .centerIcon
+            suitSource = mapIconMethod(icon.method)
+        }
+
+        /// Perspective warps often miss the index stack; one narrow-column OCR pass rescues rank/suit.
+        if rowSliceColumn == false, (rank == nil || suit == nil) {
+            let rescue = read(
+                cardCrop: cardCrop,
+                slotIndex: slotIndex,
+                rowSliceColumn: true
+            )
+            if rank == nil { rank = rescue.rank }
+            if suit == nil {
+                suit = rescue.suit
+                suitSource = rescue.suitSource
+            }
         }
 
         let cornerText = [
@@ -118,7 +168,7 @@ enum CardIndexReader: Sendable {
         .filter { !$0.isEmpty }
         .joined(separator: " ")
 
-        if SlotRecognitionDiagnostics.isLoggingEnabled, let tag = slotIndex {
+        if let tag = slotIndex {
             SlotRecognitionDiagnostics.log(
                 """
                 OCR[slot \(tag)] row_slice=\(rowSliceColumn) text='\(SlotRecognitionDiagnostics.ellipsis(cornerText, limit: 70))' \
@@ -144,6 +194,24 @@ enum CardIndexReader: Sendable {
         return false
     }
 
+    /// Extra OCR passes focused on the index stack + small suit glyph (all ranks).
+    private static func dedicatedIndexSuitOCR(
+        cardCrop: CGImage,
+        rowSliceColumn: Bool,
+        slotIndex: Int?
+    ) -> String {
+        let row = TextRecognition.cornerIndexSuitForRowSlice(
+            cardCrop: cardCrop,
+            slotIndex: slotIndex
+        )
+        let stack = TextRecognition.cornerIndexStackText(
+            cardCrop: cardCrop,
+            slotIndex: slotIndex,
+            rowSliceColumn: rowSliceColumn
+        )
+        return [row, stack].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
     private static func rankSpecificSuitOCR(
         cardCrop: CGImage,
         rank: Rank,
@@ -164,11 +232,31 @@ enum CardIndexReader: Sendable {
                 slotIndex: slotIndex
             )
         default:
-            return TextRecognition.physicalSuitGlyphText(
-                cardCrop: cardCrop,
-                slotIndex: slotIndex,
-                rowSliceColumn: rowSliceColumn
-            )
+            return [
+                TextRecognition.physicalSuitGlyphText(
+                    cardCrop: cardCrop,
+                    slotIndex: slotIndex,
+                    rowSliceColumn: rowSliceColumn
+                ),
+                TextRecognition.cornerSuitGlyphText(
+                    cardCrop: cardCrop,
+                    slotIndex: slotIndex,
+                    rowSliceColumn: rowSliceColumn
+                ),
+            ]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        }
+    }
+
+    private static func mapIconMethod(_ method: SuitIconDetector.Method) -> SuitSource {
+        switch method {
+        case .ocr: .ocr
+        case .indexShape: .indexShape
+        case .centerShape: .centerShape
+        case .indexIcon: .indexIcon
+        case .centerIcon: .centerIcon
+        case .pipColor: .pipColor
         }
     }
 }

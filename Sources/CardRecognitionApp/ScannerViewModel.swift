@@ -19,8 +19,8 @@ final class ScannerViewModel {
     var statusBanner: String?
     var latestScan: CardVisionPipeline.ScanResult?
     var isAnalyzing = false
-    /// True while the live camera is settling / bursting frames (longer than a file import).
-    var isAnalyzingLiveCapture = false
+    /// Camera-only phases shown under the progress view (`Taking photo…`, `Reading five cards…`).
+    var cameraScanPhase: String?
     var isImporterPresented = false
 
 #if os(iOS)
@@ -33,6 +33,12 @@ final class ScannerViewModel {
     func bootstrapIOSCamera() async {
         if let failure = await iosCamera.activate() {
             statusBanner = failure
+        } else if OCREngine.thirdPartyAvailable == false {
+            #if targetEnvironment(simulator)
+            statusBanner = "Simulator uses Vision OCR only. Plug in your iPhone and select it as the run destination for ML Kit."
+            #else
+            statusBanner = "Vision OCR only. Open CardRecognitionApp.xcworkspace (after pod install), not .xcodeproj."
+            #endif
         } else {
             statusBanner = nil
         }
@@ -45,22 +51,34 @@ final class ScannerViewModel {
     func analyzeLiveScene() async {
         guard isAnalyzing == false else { return }
         isAnalyzing = true
-        isAnalyzingLiveCapture = true
+        cameraScanPhase = nil
         defer {
             isAnalyzing = false
-            isAnalyzingLiveCapture = false
+            cameraScanPhase = nil
         }
 
-        statusBanner = "Hold steady — capturing the card row…"
+        statusBanner = "Place all five cards in the yellow frame, then tap Photo & read."
         let orientation = OrientationReader.preferredVideoOrientationHint()
-        let outcome = await iosCamera.performScan(interfaceOrientation: orientation)
-        switch outcome {
-        case .success(let snapshot):
-            latestScan = snapshot
-            statusBanner = "Analyzed five cards in one snapshot."
+
+        cameraScanPhase = "Taking photo…"
+        let imageResult = await iosCamera.captureStillImage(interfaceOrientation: orientation)
+        switch imageResult {
         case .failure(let error):
             latestScan = nil
             statusBanner = error.localizedDescription
+            return
+        case .success(let cgImage):
+            cameraScanPhase = "Reading five cards…"
+            do {
+                let snapshot = try await Task.detached(priority: .userInitiated) {
+                    try CardVisionPipeline.analyze(cgImage: cgImage)
+                }.value
+                latestScan = snapshot
+                statusBanner = "Captured one photo and read the row (not live video)."
+            } catch {
+                latestScan = nil
+                statusBanner = error.localizedDescription
+            }
         }
     }
 #endif

@@ -85,10 +85,10 @@ enum SuitColorHeuristic: Sendable {
         if hue.avgB + 3 < hue.avgG * 1.02 {
             return .hearts
         }
-        if hue.avgB > hue.avgG * 1.1 {
+        if hue.avgB > hue.avgG * 1.14, hue.avgB > hue.avgG + 6 {
             return .diamonds
         }
-        return hue.avgR > hue.avgB * 1.32 ? .hearts : .diamonds
+        return .hearts
     }
 
     /// Used by the silhouette stage so **black ♠ ♣ artwork never gets mis-read as ♦ simply from fill correlation**.

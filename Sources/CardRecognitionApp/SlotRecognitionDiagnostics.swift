@@ -4,9 +4,16 @@ import CoreGraphics
 enum SlotRecognitionDiagnostics: Sendable {
     /// Set `false` to silence all `[SlotRecognition]` lines (e.g. before shipping).
     nonisolated(unsafe) static var isLoggingEnabled = true
+    /// Per-ROI OCR lines (`physical_index`, `mlkit_slot`, combined_pool, …). Keep `false` unless debugging OCR.
+    nonisolated(unsafe) static var verboseOCRLogging = false
 
     static func log(_ message: @autoclosure () -> String) {
         guard isLoggingEnabled else { return }
+        print("[SlotRecognition] \(message())")
+    }
+
+    static func logOCR(_ message: @autoclosure () -> String) {
+        guard isLoggingEnabled, verboseOCRLogging else { return }
         print("[SlotRecognition] \(message())")
     }
 

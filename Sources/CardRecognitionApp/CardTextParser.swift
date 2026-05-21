@@ -68,6 +68,7 @@ enum CardTextParser: Sendable {
         }
         if parseSuit(from: trimmed) != nil { return true }
         if gluedRankSuitLetter(trimmed) != nil || trailingRankSuitLetter(trimmed) != nil { return true }
+        if trailingOCRSuitMisread(trimmed) != nil { return true }
         if trimmed.count <= 2, parseRank(from: trimmed) != nil, parseSuit(from: trimmed) == nil { return false }
         if trimmed.count <= 3, trimmed.allSatisfy(\.isNumber) { return false }
         return false
@@ -76,10 +77,15 @@ enum CardTextParser: Sendable {
     /// WIN / BET / CREDIT labels under the reel are not card indices — ignore them for rank/suit pooling.
     static func isSlotMachineChromeText(_ raw: String) -> Bool {
         let upper = raw.folding(options: .diacriticInsensitive, locale: .current).uppercased()
+        let trimmed = upper.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return false }
+        if trimmed == "HO" || trimmed == "HOI" { return true }
+        if trimmed.contains("HOLD") { return true }
         guard upper.count >= 3 else { return false }
         let chrome = [
             "WIN", "CREDIT", "REDIT", "DEBIT", "BET", "BALANCE", "CASHOUT", "CASH OUT",
-            "COIN", "PAID", "PAYLINE", "HOLD", "DEAL", "DRAW",
+            "COIN", "PAID", "PAYLINE", "HOLD", "DEAL", "DRAW", "PLAY", "SPIN", "NUL", "NULL",
+            "CREDITS", "PUSH", "COLLECT", "CASH", "LINE", "HOLE", "KIND", "PAIR",
         ]
         for word in chrome {
             if upper.contains(word) { return true }
@@ -87,11 +93,44 @@ enum CardTextParser: Sendable {
         if upper.range(of: #"\bBET\s*\d"#, options: .regularExpression) != nil { return true }
         if upper.range(of: #"\bCREDIT\s*\d"#, options: .regularExpression) != nil { return true }
         if upper.range(of: #"\bWIN\s*\d"#, options: .regularExpression) != nil { return true }
+        if upper.range(of: #"\bHOLD\b"#, options: .regularExpression) != nil { return true }
         return false
     }
 
-    /// True when the string is mostly Latin / digits / card symbols ( Vision sometimes emits Cyrillic noise in pips).
+    /// Strips cabinet UI tokens from pooled ML Kit / Vision strings before rank/suit parsing.
+    static func strippedSlotMachineChrome(from raw: String) -> String {
+        let upper = raw.folding(options: .diacriticInsensitive, locale: .current).uppercased()
+        guard upper.isEmpty == false else { return "" }
+        var tokens = upper.split { $0.isWhitespace || $0 == "|" || $0 == "+" || $0 == "," }
+            .map(String.init)
+        let dropWords: Set<String> = [
+            "WIN", "CREDIT", "REDIT", "DEBIT", "BET", "BALANCE", "CASHOUT", "COIN", "PAID",
+            "PAYLINE", "HOLD", "DEAL", "DRAW", "PLAY", "SPIN", "NUL", "NULL", "CREDITS",
+            "PUSH", "COLLECT", "CASH", "LINE", "HOI", "HO", "HOLE", "HOL", "HE", "LD",
+        ]
+        tokens.removeAll { token in
+            if dropWords.contains(token) { return true }
+            if isSlotMachineChromeText(token) { return true }
+            return false
+        }
+        return tokens.joined(separator: " ")
+    }
+
+    /// Paytable / help text spanning most of a column (not a card index).
+    static func isPaytableParagraph(_ raw: String) -> Bool {
+        let upper = raw.folding(options: .diacriticInsensitive, locale: .current).uppercased()
+        if upper.count > 36 { return true }
+        let markers = [
+            "OF A KIND", "TWO PAIR", "THREE OF", "FOUR OF", "FULL HOUSE", "STRAIGHT",
+            "FLUSH", "ROYAL", "JACKS OR", "BONUS", "PAYTABLE", "KIND..", "PAR ***",
+        ]
+        for m in markers where upper.contains(m) { return true }
+        return false
+    }
+
+    /// True when the string is mostly Latin / digits / card symbols (Vision sometimes emits Cyrillic noise in pips).
     static func isPlausibleOCRSnippet(_ raw: String) -> Bool {
+        if isPaytableParagraph(raw) { return false }
         if raw.count > 120 { return false }
         let scalars = raw.unicodeScalars
         var garbage = 0
@@ -135,6 +174,7 @@ enum CardTextParser: Sendable {
 
         if let glued = gluedRankSuitLetter(folds) { return glued }
         if let trailing = trailingRankSuitLetter(folds) { return trailing }
+        if let misread = trailingOCRSuitMisread(folds) { return misread }
 
         guard let regex = suitLetterRegexp else { return nil }
         let ns = folds as NSString
@@ -154,6 +194,18 @@ enum CardTextParser: Sendable {
             return nil
         }
         return suitFromLetter(ns.substring(with: match.range(at: 2)))
+    }
+
+    /// ML Kit often reads the heart point as `v` / `u` after the rank (`2 2 v`, `8 8 v`).
+    private static func trailingOCRSuitMisread(_ folds: String) -> Suit? {
+        let trimmed = folds.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2, let last = trimmed.last else { return nil }
+        let head = String(trimmed.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard head.isEmpty == false, parseRank(from: head) != nil else { return nil }
+        switch String(last).lowercased() {
+        case "v", "u", "y": return .hearts
+        default: return nil
+        }
     }
 
     private static func trailingRankSuitLetter(_ folds: String) -> Suit? {

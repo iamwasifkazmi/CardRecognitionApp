@@ -16,6 +16,12 @@ struct CardRecognitionParserTests {
         #expect(CardTextParser.firstSuitExplicit(in: ["J"]) == nil)
     }
 
+    @Test(arguments: ["2 2 v", "8 8 v"])
+    func ocrMisreadHeartPoint(_ raw: String) {
+        #expect(CardTextParser.parseSuit(from: raw) == .hearts)
+        #expect(CardTextParser.firstSuitExplicit(in: [raw]) == .hearts)
+    }
+
     @Test(arguments: ["10♠", "10 ♠"])
     func parseTenOfSpades(_ text: String) {
         let rank = CardTextParser.parseRank(from: text)
@@ -84,6 +90,30 @@ struct CardRecognitionParserTests {
     @Test
     func rankStillFoundWhenChromeIsNotTheWholeString() {
         #expect(CardTextParser.firstRank(in: ["corner 9", "WIN"]) == .nine)
+    }
+
+    @Test
+    func strippedChromeRemovesHoldLabels() {
+        let cleaned = CardTextParser.strippedSlotMachineChrome(from: "HOLD 2 SN 2 8 HOLD")
+        #expect(cleaned.contains("HOLD") == false)
+        #expect(CardTextParser.firstRank(in: [cleaned]) == .two)
+    }
+
+    @Test
+    func paytableParagraphIsIgnored() {
+        let raw = "3 OF A KIND.. TWO PAR *** JACKS OR BETTER"
+        #expect(CardTextParser.isPaytableParagraph(raw))
+        #expect(CardTextParser.firstRank(in: [raw]) == nil)
+    }
+
+    @Test
+    func yellowGuideConvertsTopLeftToBottomLeft() {
+        let tl = CapturePreviewFraming.fiveCardRowGuideRectNormalizedTL
+        let bl = CapturePreviewFraming.normalizedBottomLeft(fromTopLeft: tl)
+        #expect(abs(bl.minX - tl.minX) < 0.001)
+        #expect(abs(bl.width - tl.width) < 0.001)
+        #expect(abs(bl.height - tl.height) < 0.001)
+        #expect(abs(bl.minY - (1 - tl.maxY)) < 0.001)
     }
 
     @Test(arguments: ["O1", "O 1", "O l"])

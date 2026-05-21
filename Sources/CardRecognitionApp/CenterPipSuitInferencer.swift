@@ -74,20 +74,38 @@ enum CenterPipSuitInferencer: Sendable {
         guard maxX > minX, maxY > minY else { return nil }
         let bw = Float(maxX - minX + 1)
         let bh = Float(maxY - minY + 1)
-        if bw / bh > 1.16 { return .hearts }
-        if bh / bw > 1.14 { return .diamonds }
-        return nil
+        /// VP ♥ pips are often squarish — prefer hearts unless clearly tall (♦).
+        if bh / bw > 1.22 { return .diamonds }
+        if bw / bh > 1.08 { return .hearts }
+        return .hearts
     }
 
     private static func inferBlackSuit(fill: [Float]) -> Suit? {
-        let blobs = blobCount(fill: fill, side: grid, threshold: 0.07)
-        if blobs >= 4 { return .spades }
-
         let stem = spadeStemRatio(fill: fill, side: grid) ?? 0
         let upperHeavy = upperMassShare(fill: fill, side: grid)
+        let topLobe = topLobeSeparation(fill: fill, side: grid, threshold: 0.07)
+        if topLobe >= 0.12, upperHeavy >= 0.38, stem < 0.42 { return .clubs }
         if stem >= 0.44, upperHeavy < 0.42 { return .spades }
         if upperHeavy >= 0.44, stem < 0.36 { return .clubs }
         return nil
+    }
+
+    private static func topLobeSeparation(fill: [Float], side: Int, threshold: Float) -> Float {
+        var mask = [Bool](repeating: false, count: side * side)
+        for i in 0 ..< side * side where fill[i] >= threshold {
+            mask[i] = true
+        }
+        var left = 0
+        var right = 0
+        let yEnd = side / 4
+        for y in 0 ..< yEnd {
+            for x in 0 ..< side where mask[y * side + x] {
+                if x < side / 2 { left += 1 } else { right += 1 }
+            }
+        }
+        let t = Float(left + right)
+        guard t > 4 else { return 0 }
+        return abs(Float(left) - Float(right)) / t
     }
 
     private static func blobCount(fill: [Float], side: Int, threshold: Float) -> Int {

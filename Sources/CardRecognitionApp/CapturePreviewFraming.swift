@@ -2,8 +2,26 @@ import CoreGraphics
 
 /// Aligns **live capture** pixels with the on-screen 16:9 preview (`IOSCameraPreview` + `resizeAspectFill`).
 enum CapturePreviewFraming: Sendable {
-    /// Wide monitor-style strip in the app UI (must match `ScanPreviewStyle` / preview chrome).
+    /// Wide monitor-style strip in the app UI (must match preview chrome).
     static let aspectRatio: CGFloat = 16 / 9
+
+    /// Normalized **top-left** rect (0…1) for the five-card row guide drawn on the 16:9 preview.
+    static let fiveCardRowGuideRectNormalizedTL = CGRect(x: 0.03, y: 0.26, width: 0.94, height: 0.46)
+
+    /// Same band as the yellow guide, in **Vision / CI bottom-left** normalized coords (used for column crops).
+    static var fiveCardRowGuideRectNormalizedBL: CGRect {
+        normalizedBottomLeft(fromTopLeft: fiveCardRowGuideRectNormalizedTL)
+    }
+
+    /// Converts a normalized top-left rect to Vision’s bottom-left normalized space.
+    static func normalizedBottomLeft(fromTopLeft rect: CGRect) -> CGRect {
+        CGRect(
+            x: rect.minX,
+            y: 1 - rect.maxY,
+            width: rect.width,
+            height: rect.height
+        )
+    }
 
     /// Pixel rect (top-left origin, `.up` image) visible inside an aspect-fill preview of `viewAspect`.
     static func aspectFillPixelRect(

@@ -76,21 +76,18 @@ enum CornerIndexSuitInferencer: Sendable {
         if topLobe >= 0.14, bw / bh > 1.06 { return .hearts }
         if bh / bw > 1.12 { return .diamonds }
         if bw / bh > 1.20 { return .hearts }
-        return nil
+        return .hearts
     }
 
     private static func inferBlackSuit(fill: [Float], side: Int) -> Suit? {
-        let blobs = blobCount(fill: fill, side: side, threshold: 0.08)
-        if blobs >= 4 { return .spades }
-
         let stem = spadeStemRatio(fill: fill, side: side) ?? 0
         let upperHeavy = upperMassShare(fill: fill, side: side)
         let topLobe = topLobeSeparation(fill: fill, side: side, threshold: 0.08)
 
-        if stem >= 0.48, upperHeavy < 0.42 { return .spades }
-        if topLobe >= 0.14, upperHeavy >= 0.40, stem < 0.40 { return .clubs }
-        if upperHeavy >= 0.46, stem < 0.36 { return .clubs }
-        return nil
+        if topLobe >= 0.12, upperHeavy >= 0.38 { return .clubs }
+        if upperHeavy >= 0.44, stem < 0.38 { return .clubs }
+        if stem >= 0.52, upperHeavy < 0.38 { return .spades }
+        return .clubs
     }
 
     private static func topLobeSeparation(mask: [Bool], side: Int, splitY: Int) -> Float {
